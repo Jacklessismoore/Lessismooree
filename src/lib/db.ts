@@ -283,8 +283,8 @@ export async function getBriefAndStrategyCounts(brandIds: string[]): Promise<Rec
   const counts: Record<string, { briefs: number; strategies: number }> = {};
   brandIds.forEach(id => { counts[id] = { briefs: 0, strategies: 0 }; });
 
-  (briefRes.data ?? []).forEach(r => { if (counts[r.brand_id]) counts[r.brand_id].briefs++; });
-  (stratRes.data ?? []).forEach(r => { if (counts[r.brand_id]) counts[r.brand_id].strategies++; });
+  (briefRes.data ?? []).forEach((r: { brand_id: string }) => { if (counts[r.brand_id]) counts[r.brand_id].briefs++; });
+  (stratRes.data ?? []).forEach((r: { brand_id: string }) => { if (counts[r.brand_id]) counts[r.brand_id].strategies++; });
 
   return counts;
 }

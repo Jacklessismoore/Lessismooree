@@ -72,7 +72,7 @@ export interface Brand {
   id: string;
   name: string;
   slug: string;
-  pod_id: string;
+  pod_id: string | null;
   manager_id: string | null;
   color: string;
   website: string;

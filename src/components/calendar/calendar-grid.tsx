@@ -28,6 +28,7 @@ export function CalendarGrid({ items, brands, month, year }: CalendarGridProps) 
   // Group items by date
   const itemsByDate: Record<string, CalendarItem[]> = {};
   items.forEach(item => {
+    if (!item.date) return;
     const dateKey = item.date.split('T')[0]; // Handle ISO dates
     if (!itemsByDate[dateKey]) itemsByDate[dateKey] = [];
     itemsByDate[dateKey].push(item);

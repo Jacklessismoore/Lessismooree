@@ -51,7 +51,7 @@ export default function ClientFormPage() {
         .then(brand => {
           setForm({
             name: brand.name,
-            pod_id: brand.pod_id,
+            pod_id: brand.pod_id || '',
             manager_id: brand.manager_id || '',
             designer_id: brand.designer_id || '',
             location: brand.location,

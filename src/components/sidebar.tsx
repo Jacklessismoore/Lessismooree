@@ -206,6 +206,7 @@ export function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
+  const { canAccess, role } = useAuth();
 
   // Load collapsed state from localStorage
   useEffect(() => {
