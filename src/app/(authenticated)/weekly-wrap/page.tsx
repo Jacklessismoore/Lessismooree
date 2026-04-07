@@ -95,6 +95,7 @@ export default function WeeklyWrapPage() {
                     <BrandCard
                       key={brand.id}
                       brand={brand}
+                      showEdit={false}
                       onClick={() => {
                         setSelectedBrand(brand);
                         setReport(null);
