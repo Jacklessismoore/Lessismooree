@@ -211,7 +211,7 @@ export default function SOPPage() {
       <div className="max-w-4xl mx-auto">
         <PageHeader title="SOP CHECKLIST" subtitle="Daily standard operating procedures" />
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 stagger-fast">
           {podManagers.map((manager, i) => {
             const mTz = manager.timezone || 'Australia/Sydney';
             const localTime = getManagerLocalTime(mTz);

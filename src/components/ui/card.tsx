@@ -21,11 +21,9 @@ export function Card({ children, className, hoverable, padding = 'md', onClick, 
         'glass-card rounded-2xl transition-all duration-300 ease-out',
         paddings[padding],
         hoverable && [
-          'cursor-pointer',
+          'cursor-pointer card-lift card-sheen',
           'hover:border-white/10 hover:bg-white/[0.04]',
-          'hover:shadow-[0_8px_32px_rgba(0,0,0,0.3)]',
-          'hover:-translate-y-[2px]',
-          'active:translate-y-0 active:scale-[0.99] active:duration-100',
+          'active:scale-[0.99] active:duration-100',
         ].join(' '),
         className
       )}

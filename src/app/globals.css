@@ -326,6 +326,174 @@ input.no-focus-ring {
   animation: menu-pop 0.15s ease-out both;
 }
 
+/* ════════════════════════════════════════════════════════════
+   ENHANCED MOTION LAYER
+   Principles: short (150-400ms), natural easing, GPU-friendly
+   (transform/opacity only), reduced-motion safe.
+   ════════════════════════════════════════════════════════════ */
+
+/* Standard easing curves */
+:root {
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ─── Card hover lift ─── */
+.card-lift {
+  transition:
+    transform 0.35s var(--ease-out-quart),
+    box-shadow 0.35s var(--ease-out-quart),
+    border-color 0.35s var(--ease-out-quart);
+  will-change: transform;
+}
+.card-lift:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 10px 30px -12px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+/* ─── Card sheen — soft diagonal shine on hover ─── */
+.card-sheen {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.card-sheen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.04) 50%,
+    transparent 70%
+  );
+  transform: translateX(-100%);
+  transition: transform 0.8s var(--ease-out-expo);
+  pointer-events: none;
+  z-index: 1;
+}
+.card-sheen:hover::before {
+  transform: translateX(100%);
+}
+
+/* ─── Button polish — subtle press + glow ─── */
+.btn-polish {
+  transition:
+    transform 0.15s var(--ease-out-quart),
+    box-shadow 0.25s var(--ease-out-quart),
+    background-color 0.2s var(--ease-out-quart),
+    opacity 0.2s var(--ease-out-quart);
+}
+.btn-polish:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+.btn-polish:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+  transition-duration: 0.08s;
+}
+
+/* ─── Section enter — used by PageHeader and content blocks ─── */
+@keyframes section-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+.animate-section {
+  animation: section-enter 0.5s var(--ease-out-expo) both;
+}
+
+/* ─── Stagger v2 — finer control with 8 children ─── */
+.stagger-fast > * {
+  animation: fade-in-up 0.4s var(--ease-out-quart) both;
+}
+.stagger-fast > *:nth-child(1)  { animation-delay: 20ms; }
+.stagger-fast > *:nth-child(2)  { animation-delay: 50ms; }
+.stagger-fast > *:nth-child(3)  { animation-delay: 80ms; }
+.stagger-fast > *:nth-child(4)  { animation-delay: 110ms; }
+.stagger-fast > *:nth-child(5)  { animation-delay: 140ms; }
+.stagger-fast > *:nth-child(6)  { animation-delay: 170ms; }
+.stagger-fast > *:nth-child(7)  { animation-delay: 200ms; }
+.stagger-fast > *:nth-child(8)  { animation-delay: 230ms; }
+.stagger-fast > *:nth-child(9)  { animation-delay: 260ms; }
+.stagger-fast > *:nth-child(10) { animation-delay: 290ms; }
+.stagger-fast > *:nth-child(11) { animation-delay: 320ms; }
+.stagger-fast > *:nth-child(12) { animation-delay: 350ms; }
+
+/* ─── Pulsing ring for live status indicators ─── */
+@keyframes ring-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+.ring-pulse {
+  animation: ring-pulse 2s var(--ease-out-quart) infinite;
+}
+
+/* ─── Loading spinner — refined ─── */
+@keyframes spin-smooth {
+  to { transform: rotate(360deg); }
+}
+.spinner-smooth {
+  animation: spin-smooth 0.7s linear infinite;
+}
+
+/* ─── Focus ring — gentle for inputs ─── */
+.focus-ring {
+  transition: box-shadow 0.2s var(--ease-out-quart);
+}
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.18);
+}
+
+/* ─── Tab switcher underline glide ─── */
+.tab-glide {
+  position: relative;
+  transition: color 0.2s var(--ease-out-quart);
+}
+.tab-glide::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  width: 0;
+  height: 1.5px;
+  background: rgba(255, 255, 255, 0.9);
+  transform: translateX(-50%);
+  transition: width 0.3s var(--ease-out-expo);
+}
+.tab-glide.is-active::after {
+  width: 60%;
+}
+
+/* ─── Reduced motion — disable everything non-essential ─── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ─── Responsive helpers ─── */
 @media (max-width: 768px) {
   .heading {

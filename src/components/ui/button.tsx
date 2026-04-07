@@ -13,10 +13,8 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = 'primary', size = 'md', loading, disabled, children, ...props }, ref) => {
     const base = [
       'inline-flex items-center justify-center font-semibold uppercase tracking-wider',
-      'rounded-xl',
-      'transition-all duration-300 ease-out',
-      'active:scale-[0.97] active:duration-100',
-      'disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100',
+      'rounded-xl btn-polish focus-ring',
+      'disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:transform-none',
     ].join(' ');
 
     const variants = {
@@ -55,7 +53,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         {...props}
       >
         {loading && (
-          <div className="w-3.5 h-3.5 border-2 border-current/20 border-t-current rounded-full animate-spin mr-2" />
+          <div className="w-3.5 h-3.5 border-2 border-current/20 border-t-current rounded-full spinner-smooth mr-2" />
         )}
         {children}
       </button>
