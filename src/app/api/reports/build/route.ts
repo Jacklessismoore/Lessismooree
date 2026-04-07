@@ -136,18 +136,10 @@ export async function POST(request: NextRequest) {
       findMetricId(metrics, 'Form submitted by profile') ||
       findMetricId(metrics, 'Filled Out Form');
 
-    const [
-      flowsRes,
-      segmentsRes,
-      campaignReportRes,
-      flowReportRes,
-      revenueByFlowRes,
-      revenueTotalRes,
-      subscribesByFormRes,
-      formViewedByFormRes,
-      formSubmittedByFormRes,
-      bouncesDailyRes,
-    ] = await Promise.all([
+    // PHASE 2a: Parallel calls that hit DIFFERENT endpoints from metric-aggregates
+    // (flows, segments, campaign-values-reports, flow-values-reports). These
+    // don't share a rate-limit pool with metric-aggregates.
+    const [flowsRes, segmentsRes, campaignReportRes, flowReportRes] = await Promise.all([
       safe(getFlows(apiKey), 'get_flows'),
       safe(getSegments(apiKey), 'get_segments'),
       safe(
@@ -168,79 +160,75 @@ export async function POST(request: NextRequest) {
         }),
         'get_flow_report'
       ),
-      safe(
-        queryMetricAggregates(apiKey, {
-          metric_id: placedOrderId,
-          measurements: ['sum_value', 'count'],
-          interval: 'month',
-          filter: dateFilter,
-          group_by: ['$attributed_flow'],
-        }),
-        'revenue_by_flow'
-      ),
-      safe(
-        queryMetricAggregates(apiKey, {
-          metric_id: placedOrderId,
-          measurements: ['sum_value', 'count', 'unique'],
-          interval: 'month',
-          filter: dateFilter,
-        }),
-        'revenue_total'
-      ),
-      // Form-related metrics (pop-up performance)
-      subscribedId
-        ? safe(
-            queryMetricAggregates(apiKey, {
-              metric_id: subscribedId,
-              measurements: ['count', 'unique'],
-              interval: 'month',
-              filter: dateFilter,
-              group_by: ['form_id'],
-            }),
-            'subscribes_by_form'
-          )
-        : Promise.resolve({ error: 'no "Subscribed to List" metric' }),
-      formViewedId
-        ? safe(
-            queryMetricAggregates(apiKey, {
-              metric_id: formViewedId,
-              measurements: ['count', 'unique'],
-              interval: 'month',
-              filter: dateFilter,
-              group_by: ['form_id'],
-            }),
-            'form_viewed_by_form'
-          )
-        : Promise.resolve({ error: 'no form-viewed metric' }),
-      formSubmittedId
-        ? safe(
-            queryMetricAggregates(apiKey, {
-              metric_id: formSubmittedId,
-              measurements: ['count', 'unique'],
-              interval: 'month',
-              filter: dateFilter,
-              group_by: ['form_id'],
-            }),
-            'form_submitted_by_form'
-          )
-        : Promise.resolve({ error: 'no form-submitted metric' }),
-      // Deliverability / list signals
-      bouncedId
-        ? safe(
-            queryMetricAggregates(apiKey, {
-              metric_id: bouncedId,
-              measurements: ['count'],
-              interval: 'day',
-              filter: dateFilter,
-            }),
-            'bounces_daily'
-          )
-        : Promise.resolve({ error: 'no bounced metric' }),
     ]);
+
+    // PHASE 2b: metric-aggregate calls. These share a burst limit (3/sec) so we
+    // run them SEQUENTIALLY. The klaviyoGet/Post helpers auto-retry 429s with
+    // backoff as a safety net. Total wall time ~2-4 seconds for 5 calls.
+    //
+    // Note: "Subscribed to List" does NOT support group_by: [form_id] — Klaviyo
+    // rejects it with a 400. Form attribution data lives in the dedicated form
+    // metrics (Viewed Form / Submitted Form).
+    const revenueByFlowRes = await safe(
+      queryMetricAggregates(apiKey, {
+        metric_id: placedOrderId,
+        measurements: ['sum_value', 'count'],
+        interval: 'month',
+        filter: dateFilter,
+        group_by: ['$attributed_flow'],
+      }),
+      'revenue_by_flow'
+    );
+    const revenueTotalRes = await safe(
+      queryMetricAggregates(apiKey, {
+        metric_id: placedOrderId,
+        measurements: ['sum_value', 'count', 'unique'],
+        interval: 'month',
+        filter: dateFilter,
+      }),
+      'revenue_total'
+    );
+    const formViewedByFormRes = formViewedId
+      ? await safe(
+          queryMetricAggregates(apiKey, {
+            metric_id: formViewedId,
+            measurements: ['count', 'unique'],
+            interval: 'month',
+            filter: dateFilter,
+            group_by: ['form_id'],
+          }),
+          'form_viewed_by_form'
+        )
+      : { error: 'no form-viewed metric' };
+    const formSubmittedByFormRes = formSubmittedId
+      ? await safe(
+          queryMetricAggregates(apiKey, {
+            metric_id: formSubmittedId,
+            measurements: ['count', 'unique'],
+            interval: 'month',
+            filter: dateFilter,
+            group_by: ['form_id'],
+          }),
+          'form_submitted_by_form'
+        )
+      : { error: 'no form-submitted metric' };
+    const bouncesDailyRes = bouncedId
+      ? await safe(
+          queryMetricAggregates(apiKey, {
+            metric_id: bouncedId,
+            measurements: ['count'],
+            interval: 'day',
+            filter: dateFilter,
+          }),
+          'bounces_daily'
+        )
+      : { error: 'no bounced metric' };
+
     // unused metric IDs swallowed to avoid lint warnings
     void openedEmailId;
     void spamId;
     void receivedId;
+    void subscribedId;
 
     // ─── PHASE 3: bundle into a structured JSON payload for Claude ───
     // Each section is trimmed individually so we keep useful data from every
@@ -255,7 +243,6 @@ export async function POST(request: NextRequest) {
   "flow_report": ${stringifyTrimmed(flowReportRes, 10000)},
   "revenue_by_flow": ${stringifyTrimmed(revenueByFlowRes, 3000)},
   "revenue_total": ${stringifyTrimmed(revenueTotalRes, 2000)},
-  "form_subscribes_by_form": ${stringifyTrimmed(subscribesByFormRes, 3000)},
   "form_viewed_by_form": ${stringifyTrimmed(formViewedByFormRes, 3000)},
   "form_submitted_by_form": ${stringifyTrimmed(formSubmittedByFormRes, 3000)},
   "bounces_daily": ${stringifyTrimmed(bouncesDailyRes, 2000)}

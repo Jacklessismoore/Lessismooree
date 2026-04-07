@@ -10,6 +10,31 @@ function headers(apiKey: string) {
   };
 }
 
+// Parse a retry-after header (seconds) or fall back to a default
+function parseRetryAfter(res: Response, fallbackMs: number): number {
+  const h = res.headers.get('retry-after');
+  if (h) {
+    const n = parseFloat(h);
+    if (!isNaN(n)) return Math.min(n * 1000, 10_000); // cap at 10s
+  }
+  return fallbackMs;
+}
+
+async function doFetch(url: string, init: RequestInit, maxRetries = 3): Promise<Response> {
+  let attempt = 0;
+  while (true) {
+    const res = await fetch(url, init);
+    // Retry on 429 (rate limit) and 503 (service unavailable) with backoff
+    if ((res.status === 429 || res.status === 503) && attempt < maxRetries) {
+      const wait = parseRetryAfter(res, 500 * Math.pow(2, attempt)); // 500ms → 1s → 2s
+      await new Promise((r) => setTimeout(r, wait));
+      attempt += 1;
+      continue;
+    }
+    return res;
+  }
+}
+
 async function klaviyoGet(apiKey: string, path: string, params?: Record<string, string>) {
   const url = new URL(`${BASE_URL}${path}`);
   if (params) {
@@ -17,7 +42,7 @@ async function klaviyoGet(apiKey: string, path: string, params?: Record<string, 
       url.searchParams.set(k, v);
     }
   }
-  const res = await fetch(url.toString(), { headers: headers(apiKey) });
+  const res = await doFetch(url.toString(), { headers: headers(apiKey) });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Klaviyo API error ${res.status}: ${text.slice(0, 500)}`);
@@ -26,7 +51,7 @@ async function klaviyoGet(apiKey: string, path: string, params?: Record<string, 
 }
 
 async function klaviyoPost(apiKey: string, path: string, body: unknown) {
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await doFetch(`${BASE_URL}${path}`, {
     method: 'POST',
     headers: headers(apiKey),
     body: JSON.stringify(body),
