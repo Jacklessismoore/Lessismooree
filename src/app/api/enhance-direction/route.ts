@@ -39,7 +39,7 @@ Write a clear, specific direction for this email campaign. Include:
 Keep it concise (3-5 sentences). Output ONLY the direction text, no labels or headers.`;
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-5',
       max_tokens: 300,
       messages: [{ role: 'user', content: prompt }],
     });

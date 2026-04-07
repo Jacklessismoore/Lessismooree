@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     }
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       max_tokens: 1000,
       system: `You are a senior email marketing strategist analyzing DTC e-commerce brands. Based on the brand name, website URL, and/or Instagram handle provided, generate a comprehensive email marketing profile. Use your knowledge of the brand if you recognize it, otherwise make educated inferences based on the brand name, URL patterns, and industry norms. Return ONLY valid JSON with no other text.`,
       messages: [{

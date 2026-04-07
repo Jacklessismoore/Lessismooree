@@ -42,7 +42,7 @@ ${briefContent.slice(0, 2000)}
 Return ONLY the JSON object. No other text.`;
 
     const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-5',
       max_tokens: 300,
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],

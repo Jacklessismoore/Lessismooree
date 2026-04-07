@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
 
     // Call Claude with agency knowledge system prompt
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       max_tokens: 8096,
       system: GENERATION_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: prompt }],

@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     const productNames = productList.map((p: { title: string }) => p.title).join('\n- ');
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-5',
       max_tokens: 300,
       messages: [{
         role: 'user',

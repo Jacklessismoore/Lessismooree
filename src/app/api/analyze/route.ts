@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     // Onboarding notes mode — summarise the document into structured notes
     if (mode === 'onboarding_notes') {
       const message = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-haiku-4-5',
         max_tokens: 2000,
         system: `You are a senior email marketing strategist onboarding a new DTC e-commerce client. Summarise the provided document into structured onboarding notes that will help the team write better email copy and strategies. Include: brand overview, key differentiators, target customer profile, product highlights, tone/voice observations, any restrictions or compliance notes, and strategic opportunities for email marketing. Be concise but thorough. Output as clean text with section headers.`,
         messages: [{ role: 'user', content: `Create onboarding notes from this document:\n\n${truncated}` }],
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
 
     // Default mode — extract brand info as JSON
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-5',
       max_tokens: 1024,
       system: ANALYSIS_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: `Extract brand info from:\n\n${truncated}` }],

@@ -41,7 +41,7 @@ ${flowSummary || '(not provided)'}
 Produce ONE short sentence (max 20 words) describing a single focused test theme for this round. No preamble, no quotes, no em dashes. Just the sentence.`;
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: 'claude-haiku-4-5',
       max_tokens: 120,
       messages: [{ role: 'user', content: prompt }],
     });

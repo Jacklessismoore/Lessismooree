@@ -68,7 +68,7 @@ async function classifyMessages(
     : '';
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-haiku-4-5',
     max_tokens: 2000,
     system: `You are an inbox triage assistant for Less Is Moore, an email marketing agency. You classify Slack messages from client channels to help account managers prioritise their work.
 
