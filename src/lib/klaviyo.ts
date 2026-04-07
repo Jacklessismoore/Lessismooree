@@ -58,6 +58,130 @@ export async function getFlows(apiKey: string) {
   });
 }
 
+// Klaviyo does NOT allow `include=flow-messages` on the /flows/{id}/flow-actions
+// endpoint, so we fetch actions first, then for each SEND_EMAIL action fetch
+// its flow-messages via /flow-actions/{actionId}/flow-messages.
+export async function getFlowActions(apiKey: string, flowId: string) {
+  return klaviyoGet(apiKey, `/flows/${flowId}/flow-actions`);
+}
+
+export async function getFlowMessagesForAction(apiKey: string, actionId: string) {
+  return klaviyoGet(apiKey, `/flow-actions/${actionId}/flow-messages`);
+}
+
+// High-level helper used by /api/klaviyo/live-flows. Returns a normalized
+// array of live flows with their email subject lines and preview texts.
+export async function getLiveFlowsWithMessages(
+  apiKey: string
+): Promise<
+  Array<{
+    flowId: string;
+    flowName: string;
+    status: string;
+    triggerType: string;
+    emails: Array<{
+      position: number;
+      messageId: string;
+      messageLabel: string | null;
+      subject: string;
+      previewText: string;
+    }>;
+  }>
+> {
+  // 1. Pull all flows, keep live + not archived
+  const flowsRes = await getFlows(apiKey);
+  const flows = (flowsRes?.data || []).filter((f: {
+    attributes?: { status?: string; archived?: boolean };
+  }) => {
+    const status = f?.attributes?.status;
+    const archived = f?.attributes?.archived;
+    return status === 'live' && !archived;
+  });
+
+  const results: Array<{
+    flowId: string;
+    flowName: string;
+    status: string;
+    triggerType: string;
+    emails: Array<{
+      position: number;
+      messageId: string;
+      messageLabel: string | null;
+      subject: string;
+      previewText: string;
+    }>;
+  }> = [];
+
+  // 2. For each live flow, fetch its actions, then for each SEND_EMAIL action,
+  //    fetch its flow-messages separately.
+  for (const flow of flows) {
+    const flowId = flow.id as string;
+    const flowName = (flow.attributes?.name as string) || 'Untitled Flow';
+    const status = (flow.attributes?.status as string) || 'live';
+    const triggerType = (flow.attributes?.trigger_type as string) || 'unknown';
+
+    let actionsRes;
+    try {
+      actionsRes = await getFlowActions(apiKey, flowId);
+    } catch {
+      continue;
+    }
+
+    const actions = (actionsRes?.data || []) as Array<{
+      id: string;
+      attributes?: { action_type?: string };
+    }>;
+
+    const sendEmailActions = actions.filter((a) => a.attributes?.action_type === 'SEND_EMAIL');
+
+    const emails: Array<{
+      position: number;
+      messageId: string;
+      messageLabel: string | null;
+      subject: string;
+      previewText: string;
+    }> = [];
+
+    let position = 0;
+    for (const action of sendEmailActions) {
+      let msgRes;
+      try {
+        msgRes = await getFlowMessagesForAction(apiKey, action.id);
+      } catch {
+        continue;
+      }
+      const messages = (msgRes?.data || []) as Array<{
+        id: string;
+        attributes?: {
+          name?: string;
+          channel?: string;
+          content?: { subject?: string; preview_text?: string };
+        };
+      }>;
+      for (const msg of messages) {
+        if (msg.attributes?.channel && msg.attributes.channel !== 'Email') continue;
+        const content = msg.attributes?.content;
+        const subject = (content?.subject || '').trim();
+        if (!subject) continue;
+        position += 1;
+        emails.push({
+          position,
+          messageId: msg.id,
+          messageLabel: msg.attributes?.name || null,
+          subject,
+          previewText: (content?.preview_text || '').trim(),
+        });
+      }
+    }
+
+    if (emails.length > 0) {
+      results.push({ flowId, flowName, status, triggerType, emails });
+    }
+  }
+
+  return results;
+}
+
 export async function getLists(apiKey: string) {
   return klaviyoGet(apiKey, '/lists', {
     'fields[list]': 'name,created,updated,opt_in_process',

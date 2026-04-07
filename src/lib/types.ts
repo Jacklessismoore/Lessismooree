@@ -30,12 +30,65 @@ export interface Pod {
   created_at: string;
 }
 
+// Note: the app's real role system lives in `user_roles` (see auth-context.tsx).
+// `Manager` below is the legacy `managers` table (separate from auth users).
+// We added `email` + `role` columns in a migration but they are unused for
+// access control. Leaving them here for completeness only.
+
 export interface Manager {
   id: string;
   name: string;
+  email: string | null;
   timezone: string;
   pod_id: string | null;
   created_at: string;
+}
+
+// ===== A/B Test types =====
+
+export interface FlowEmail {
+  position: number;            // 1-indexed
+  messageId: string;           // Klaviyo flow-message ID
+  messageLabel: string | null; // Klaviyo message name/label if present
+  subject: string;
+  previewText: string;
+}
+
+export interface LiveFlow {
+  flowId: string;
+  flowName: string;
+  status: string;
+  triggerType: string;
+  emails: FlowEmail[];
+}
+
+export interface ABTestRow {
+  id: string;
+  batch_id: string | null;
+  brand_id: string;
+  flow_id: string;
+  flow_name: string;
+  flow_message_id: string;
+  flow_message_label: string | null;
+  original_subject: string | null;
+  original_preview: string | null;
+  variant_subject: string;
+  variant_preview: string | null;
+  hypothesis: string | null;
+  status: 'draft' | 'exported' | 'running' | 'complete';
+  created_at: string;
+  created_by: string | null;
+}
+
+export interface ABTestBatch {
+  batch_id: string;
+  brand_id: string;
+  brand_name: string;
+  num_tests: number;
+  hypothesis: string | null;
+  markdown: string;
+  created_at: string;
+  tests: ABTestRow[];
 }
 
 export interface SOPCompletion {

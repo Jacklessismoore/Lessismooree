@@ -11,7 +11,7 @@ export const ROLE_ACCESS: Record<UserRole, string[]> = {
   account_manager: [
     '/', '/sop', '/create', '/calendar', '/briefs', '/reports',
     '/inbox', '/design-queue', '/references', '/chat',
-    '/clients', '/team', '/clients/new',
+    '/clients', '/team', '/clients/new', '/ab-tests',
   ],
   designer: [
     '/', '/create', '/calendar', '/briefs', '/design-queue', '/chat',
@@ -20,7 +20,7 @@ export const ROLE_ACCESS: Record<UserRole, string[]> = {
     '/', '/calendar', '/briefs', '/chat',
   ],
   klaviyo_tech: [
-    '/', '/calendar', '/briefs', '/reports', '/chat',
+    '/', '/calendar', '/briefs', '/reports', '/chat', '/ab-tests',
   ],
 };
 

@@ -70,13 +70,13 @@ export function BrandCard({ brand, onClick, showEdit = true, showMenu = false, o
             {brand.name}
           </p>
           <p className="text-[9px] text-[#555] mt-1">
-            {subtitle || [brand.location, brand.category].filter(Boolean).join(' · ') || 'No details'}
+            {subtitle || brand.category || 'No category'}
           </p>
 
           {/* Edit button */}
           {showEdit && (
             <Link href={`/clients/${brand.id}`} onClick={e => e.stopPropagation()} className="w-full mt-2">
-              <Button size="sm" className="text-[9px] py-1 px-3 min-h-0 w-full sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+              <Button size="sm" className="text-[9px] py-1 px-3 min-h-0 w-full">
                 Edit
               </Button>
             </Link>

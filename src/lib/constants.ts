@@ -21,8 +21,6 @@ export const BRIEF_TYPES: { value: BriefType; label: string; icon: string; descr
   { value: 'flow_sms', label: 'Flow SMS', icon: '💬', description: 'SMS flow message', category: 'flows' },
   // Strategy
   { value: 'strategy', label: 'Monthly Strategy', icon: '📅', description: 'Full monthly email strategy with calendar', category: 'strategy' },
-  // Testing
-  { value: 'ab_test', label: 'A/B Testing', icon: '🔬', description: 'Split test variants with different approaches', category: 'testing' },
 ];
 
 export const FRAMEWORKS = [
@@ -69,6 +67,7 @@ export const NAV_SECTIONS = [
     label: 'Tools',
     items: [
       { label: 'Reports', href: '/reports', icon: '📊' },
+      { label: 'A/B Tests', href: '/ab-tests', icon: '🧪' },
       { label: 'References', href: '/references', icon: '🔖' },
       { label: 'Chat', href: '/chat', icon: '💬' },
     ],
