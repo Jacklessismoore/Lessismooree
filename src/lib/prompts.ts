@@ -4,6 +4,7 @@ function brandContext(brand: Brand): string {
   return `Brand: ${brand.name} | ${brand.category} | ${brand.location}
 Voice: ${brand.voice || 'Not specified'}
 Rules: ${brand.rules || 'None'}
+AVOID (never use any of these in copy): ${brand.avoid?.trim() || 'None specified'}
 Products: ${brand.products?.join(', ') || 'Not specified'}
 Audiences: ${brand.audiences?.join(', ') || 'Not specified'}
 Founder: ${brand.founder || 'Not specified'}
@@ -90,7 +91,7 @@ For Founder Story framework, use this simpler table:
 7. Copy per block: 1-3 sentences max. Split longer blocks.
 8. Product blocks: product name + 1-line descriptor + CTA. No paragraphs.
 9. Do not invent URLs. Use client website or [URL NEEDED].
-10. Write in the brand voice. Follow brand rules strictly.
+10. Write in the brand voice. Follow brand rules strictly. Anything in the brand AVOID list is non-negotiable — never use those words, claims, or topics under any circumstances.
 11. If an offer exists, state it clearly. If no offer, do not imply one.
 12. One subject line. One preview text. Commit to the strongest. No lists of options.
 13. Do not use generic marketing language ("Unlock your potential", "Elevate your routine").
@@ -395,7 +396,20 @@ export function buildAnalysisPrompt(documentText: string): string {
   return documentText;
 }
 
-export const ANALYSIS_SYSTEM_PROMPT = `You are a senior brand analyst at an email marketing agency. Extract brand information from the provided document. Return ONLY valid JSON with no other text, in this exact format:
-{"voice":"description of brand voice and tone -- be specific about personality, formality level, humor usage, and how they address customers","rules":"copy rules and constraints -- include dos and don'ts, words to avoid, tone boundaries, and any compliance requirements","audiences":["audience segment 1","audience segment 2"],"products":["product or collection 1","product or collection 2"]}
+export const ANALYSIS_SYSTEM_PROMPT = `You are a senior brand analyst at an email marketing agency. Read the provided document carefully and extract a complete brand profile that an account manager will use to brief copywriters and designers.
 
-Be thorough but concise. Extract real information from the document. Do not invent data. If a field is not present in the document, use an empty string or empty array.`;
+Return ONLY valid JSON (no markdown fences, no commentary) in this exact shape:
+{
+  "voice": "Detailed description of the brand voice and tone. 3-6 sentences. Cover: personality traits, formality level, humour usage, how they speak to the customer (e.g. friend vs expert vs cheerleader), pacing/rhythm of sentences, and any signature phrases. Be specific and actionable, not generic.",
+  "rules": "The brand's positive copy rules. 3-8 specific guidelines a copywriter should follow. Examples: 'Always use sentence case in subject lines', 'Refer to customers as \"the team\"', 'Lead with benefits before features'. Concrete instructions only.",
+  "avoid": "Words, phrases, claims, topics, or stylistic choices the brand explicitly forbids. 3-8 items. Examples: 'Never use \"cheap\"', 'No exclamation marks in subject lines', 'Avoid health claims like cure, heal, treat', 'Do not mention competitors by name'. Be explicit.",
+  "audiences": ["3-6 distinct audience segments with 1 short descriptor each, e.g. 'New mums (28-38, sleep-deprived)', 'Eco-conscious millennials'"],
+  "products": ["Up to 10 specific product names, collections, or hero SKUs mentioned in the document"]
+}
+
+CRITICAL RULES:
+1. Extract REAL information from the document. Do NOT invent or hallucinate.
+2. If something genuinely is not in the document, use an empty string or empty array for that field — never fabricate.
+3. Voice and rules must be SPECIFIC and ACTIONABLE. Generic phrases like "professional and friendly" are unacceptable. Extract concrete patterns.
+4. The avoid field is CRITICAL. Look hard for any restrictions, taboos, words to never use, claims they cannot make, regulatory constraints, or stylistic prohibitions.
+5. JSON only. No other text.`;

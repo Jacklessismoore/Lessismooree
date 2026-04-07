@@ -150,6 +150,7 @@ export interface Brand {
   category: string;
   voice: string;
   rules: string;
+  avoid: string;
   audiences: string[];
   products: string[];
   notes: string;
@@ -237,6 +238,7 @@ export interface CreateFormData {
 export interface AnalysisResult {
   voice: string;
   rules: string;
+  avoid: string;
   audiences: string[];
   products: string[];
 }

@@ -22,6 +22,7 @@ interface FormState {
   slack_channel_id: string;
   voice: string;
   rules: string;
+  avoid: string;
   audiences: string[];
   products: string[];
   notes: string;
@@ -299,6 +300,7 @@ export function VoiceRulesStep({
         placeholder="Any copy rules, restrictions, or guidelines..."
         className="min-h-[120px]"
       />
+      <AvoidUploader form={form} onChange={onChange} />
       <TagInput
         label="Audiences"
         tags={form.audiences}
@@ -473,6 +475,91 @@ Return ONLY a JSON object:
   );
 }
 
+// ─── Brand AVOID uploader — wording, claims, taboos to never include in copy ───
+function AvoidUploader({
+  form,
+  onChange,
+}: {
+  form: FormState;
+  onChange: (updates: Partial<FormState>) => void;
+}) {
+  const [extracting, setExtracting] = useState(false);
+
+  const handleAvoidUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const lower = file.name.toLowerCase();
+    const isPlainText = lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('.csv');
+
+    let raw = '';
+    try {
+      if (isPlainText) {
+        raw = await file.text();
+      } else {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/parse-document', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Parse failed');
+        raw = data.text;
+      }
+      if (!raw.trim()) {
+        toast.error('No text found in file');
+        return;
+      }
+      // Extract just the avoid list with the AI
+      setExtracting(true);
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentText: raw, mode: 'avoid_list' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Extraction failed');
+      const merged = [form.avoid?.trim(), data.avoid?.trim()].filter(Boolean).join('\n');
+      onChange({ avoid: merged });
+      toast.success('Avoid list extracted');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to process file');
+    } finally {
+      setExtracting(false);
+      e.target.value = '';
+    }
+  };
+
+  return (
+    <div>
+      <Label>Brand Avoid List</Label>
+      <p className="text-[9px] text-[#444] mb-2">
+        Words, phrases, claims, or topics that copywriters must NEVER use. Used by the brief generator.
+      </p>
+      <Textarea
+        value={form.avoid}
+        onChange={e => onChange({ avoid: e.target.value })}
+        placeholder="e.g. Do not use 'cure', 'guaranteed', or any health claims. Avoid the word 'cheap'..."
+        className="min-h-[100px]"
+      />
+      <label className="block mt-2 border-2 border-dashed border-[#252525] rounded-lg p-4 text-center cursor-pointer hover:border-white/20 transition-colors">
+        <input
+          type="file"
+          accept=".txt,.csv,.md,.pdf,.docx"
+          onChange={handleAvoidUpload}
+          className="hidden"
+          disabled={extracting}
+        />
+        {extracting ? (
+          <p className="text-[11px] text-white">Extracting avoid list...</p>
+        ) : (
+          <>
+            <p className="text-[11px] text-[#888]">Upload a brand guide / avoid doc</p>
+            <p className="text-[9px] text-[#444] mt-0.5">PDF, DOCX, TXT — AI extracts the avoid rules</p>
+          </>
+        )}
+      </label>
+    </div>
+  );
+}
+
 export function DocumentsStep({
   form,
   onChange,
@@ -486,18 +573,40 @@ export function DocumentsStep({
   const [fileText, setFileText] = useState('');
   const [fileName, setFileName] = useState('');
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const text = evt.target?.result as string;
-      setFileText(text);
+    const lower = file.name.toLowerCase();
+    const isPlainText = lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('.csv');
+
+    if (isPlainText) {
+      // Plain text — read locally for instant feedback
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const text = evt.target?.result as string;
+        setFileText(text);
+        setFileName(file.name);
+        toast.success(`File loaded: ${file.name}`);
+      };
+      reader.readAsText(file);
+      return;
+    }
+
+    // PDF / DOCX — parse server-side
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      toast.loading('Parsing document...', { id: 'doc-parse' });
+      const res = await fetch('/api/parse-document', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Parse failed');
+      setFileText(data.text);
       setFileName(file.name);
-      toast.success(`File loaded: ${file.name}`);
-    };
-    reader.readAsText(file);
+      toast.success(`File loaded: ${file.name}`, { id: 'doc-parse' });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to parse document', { id: 'doc-parse' });
+    }
   };
 
   const handleAnalyze = async () => {
@@ -553,6 +662,7 @@ export function DocumentsStep({
     onChange({
       voice: analysisResult.voice || form.voice,
       rules: analysisResult.rules || form.rules,
+      avoid: analysisResult.avoid || form.avoid,
       audiences: analysisResult.audiences.length > 0 ? analysisResult.audiences : form.audiences,
       products: analysisResult.products.length > 0 ? analysisResult.products : form.products,
     });
@@ -568,7 +678,7 @@ export function DocumentsStep({
         <label className="block mt-1 border-2 border-dashed border-[#252525] rounded-lg p-8 text-center cursor-pointer hover:border-white/20 transition-colors">
           <input
             type="file"
-            accept=".txt,.csv,.md"
+            accept=".txt,.csv,.md,.pdf,.docx"
             onChange={handleFileUpload}
             className="hidden"
           />
@@ -580,7 +690,7 @@ export function DocumentsStep({
           ) : (
             <>
               <p className="text-sm text-[#555]">Click to upload or drag and drop</p>
-              <p className="text-[10px] text-[#333] mt-1">.txt, .csv, .md files</p>
+              <p className="text-[10px] text-[#333] mt-1">PDF, DOCX, TXT, MD, CSV</p>
             </>
           )}
         </label>
@@ -638,6 +748,7 @@ export function DocumentsStep({
           <div className="space-y-2 text-xs">
             <div><span className="text-[#555]">Voice:</span> <span className="text-[#999]">{analysisResult.voice}</span></div>
             <div><span className="text-[#555]">Rules:</span> <span className="text-[#999]">{analysisResult.rules}</span></div>
+            <div><span className="text-[#555]">Avoid:</span> <span className="text-[#999]">{analysisResult.avoid}</span></div>
             <div><span className="text-[#555]">Audiences:</span> <span className="text-[#999]">{analysisResult.audiences.join(', ')}</span></div>
             <div><span className="text-[#555]">Products:</span> <span className="text-[#999]">{analysisResult.products.join(', ')}</span></div>
           </div>

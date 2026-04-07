@@ -20,6 +20,22 @@ export async function POST(request: NextRequest) {
     // Truncate to prevent excessive token usage
     const truncated = documentText.slice(0, 15000);
 
+    // Avoid-list mode — extract just the brand's forbidden words / claims / topics
+    if (mode === 'avoid_list') {
+      const message = await anthropic.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 800,
+        system: `You read brand guideline documents and extract the AVOID list — any words, phrases, claims, topics, or stylistic choices the brand explicitly forbids in their copy. Return ONLY the avoid rules as a clean newline-separated list. No numbering, no preamble. If a doc contains no explicit restrictions, return an empty string.`,
+        messages: [{ role: 'user', content: `Extract the brand's avoid list from this document:\n\n${truncated}` }],
+      });
+      const avoid = message.content
+        .filter(block => block.type === 'text')
+        .map(block => (block as { type: 'text'; text: string }).text)
+        .join('')
+        .trim();
+      return NextResponse.json({ avoid });
+    }
+
     // Onboarding notes mode — summarise the document into structured notes
     if (mode === 'onboarding_notes') {
       const message = await anthropic.messages.create({
@@ -61,6 +77,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       voice: result.voice || '',
       rules: result.rules || '',
+      avoid: result.avoid || '',
       audiences: Array.isArray(result.audiences) ? result.audiences : [],
       products: Array.isArray(result.products) ? result.products : [],
     });
