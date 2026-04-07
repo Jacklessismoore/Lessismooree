@@ -9,7 +9,7 @@ export type UserRole = 'account_manager' | 'designer' | 'scheduler' | 'klaviyo_t
 // Define which routes each role can access
 export const ROLE_ACCESS: Record<UserRole, string[]> = {
   account_manager: [
-    '/', '/sop', '/create', '/calendar', '/briefs', '/reports',
+    '/', '/sop', '/create', '/calendar', '/briefs', '/reports', '/weekly-wrap',
     '/inbox', '/design-queue', '/references', '/chat',
     '/clients', '/team', '/clients/new', '/ab-tests',
   ],
@@ -20,7 +20,7 @@ export const ROLE_ACCESS: Record<UserRole, string[]> = {
     '/', '/calendar', '/briefs', '/chat',
   ],
   klaviyo_tech: [
-    '/', '/calendar', '/briefs', '/reports', '/chat', '/ab-tests',
+    '/', '/calendar', '/briefs', '/reports', '/weekly-wrap', '/chat', '/ab-tests',
   ],
 };
 
