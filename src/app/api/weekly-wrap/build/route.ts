@@ -104,10 +104,12 @@ export async function POST(request: NextRequest) {
       'click_to_open_rate',
       'conversion_rate',
       'conversions',
+      'conversion_value',
+      'revenue_per_recipient',
+      'average_order_value',
       'bounce_rate',
       'unsubscribe_rate',
     ];
-    const reportValueStats = ['conversion_value', 'revenue_per_recipient', 'average_order_value'];
 
     // Pull campaign and flow reports in parallel.
     // The campaign-values-report endpoint REQUIRES a send_channel filter.
@@ -116,7 +118,6 @@ export async function POST(request: NextRequest) {
         getCampaignReport(apiKey, {
           conversionMetricId: placedOrderId,
           statistics: reportStats,
-          valueStatistics: reportValueStats,
           timeframe: { key: timeframeKey },
           filter: 'equals(send_channel,"email")',
         }),
@@ -126,7 +127,6 @@ export async function POST(request: NextRequest) {
         getFlowReport(apiKey, {
           conversionMetricId: placedOrderId,
           statistics: reportStats,
-          valueStatistics: reportValueStats,
           timeframe: { key: timeframeKey },
         }),
         'get_flow_report'
