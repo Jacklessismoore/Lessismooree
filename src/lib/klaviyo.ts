@@ -40,6 +40,61 @@ async function klaviyoPost(apiKey: string, path: string, body: unknown) {
 
 // ─── Public API functions ───
 
+export async function getAccountDetails(apiKey: string) {
+  return klaviyoGet(apiKey, '/accounts');
+}
+
+interface ReportTimeframe {
+  key?: string;
+  start?: string;
+  end?: string;
+}
+
+interface ReportInput {
+  conversionMetricId: string;
+  statistics: string[];
+  valueStatistics?: string[];
+  timeframe?: ReportTimeframe;
+  filter?: string;
+  groupBy?: string[];
+}
+
+// Reporting API: campaign values report
+export async function getCampaignReport(apiKey: string, input: ReportInput) {
+  const body = {
+    data: {
+      type: 'campaign-values-report',
+      attributes: {
+        statistics: input.statistics,
+        timeframe: input.timeframe || { key: 'last_30_days' },
+        conversion_metric_id: input.conversionMetricId,
+        ...(input.valueStatistics?.length ? { value_statistics: input.valueStatistics } : {}),
+        ...(input.filter ? { filter: input.filter } : {}),
+        ...(input.groupBy?.length ? { group_by: input.groupBy } : {}),
+      },
+    },
+  };
+  return klaviyoPost(apiKey, '/campaign-values-reports', body);
+}
+
+// Reporting API: flow values report
+export async function getFlowReport(apiKey: string, input: ReportInput) {
+  const body = {
+    data: {
+      type: 'flow-values-report',
+      attributes: {
+        statistics: input.statistics,
+        timeframe: input.timeframe || { key: 'last_30_days' },
+        conversion_metric_id: input.conversionMetricId,
+        ...(input.valueStatistics?.length ? { value_statistics: input.valueStatistics } : {}),
+        ...(input.filter ? { filter: input.filter } : {}),
+        ...(input.groupBy?.length ? { group_by: input.groupBy } : {}),
+      },
+    },
+  };
+  return klaviyoPost(apiKey, '/flow-values-reports', body);
+}
+
 export async function getCampaigns(apiKey: string, filter?: string) {
   const params: Record<string, string> = {
     'fields[campaign]': 'name,status,send_time,archived',
@@ -243,8 +298,20 @@ export async function executeKlaviyoTool(
     let result: unknown;
 
     switch (toolName) {
+      case 'get_account_details': {
+        result = await getAccountDetails(apiKey);
+        break;
+      }
       case 'get_campaigns': {
         result = await getCampaigns(apiKey, toolInput.filter as string | undefined);
+        break;
+      }
+      case 'get_campaign_report': {
+        result = await getCampaignReport(apiKey, toolInput as unknown as ReportInput);
+        break;
+      }
+      case 'get_flow_report': {
+        result = await getFlowReport(apiKey, toolInput as unknown as ReportInput);
         break;
       }
       case 'get_flows': {

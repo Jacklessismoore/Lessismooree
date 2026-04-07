@@ -2,15 +2,45 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase/server';
 import { executeKlaviyoTool } from '@/lib/klaviyo';
+import { KLAVIYO_ACCOUNT_ANALYSER_SKILL } from '@/lib/skills/klaviyo-account-analyser';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
-// Reuse the same Klaviyo tool definitions as the existing klaviyo-chat route.
+// Tool catalog wired to the klaviyo-account-analyser skill. Tool names match
+// what the skill references; executeKlaviyoTool dispatches them.
 const KLAVIYO_TOOLS: Anthropic.Tool[] = [
+  {
+    name: 'get_account_details',
+    description:
+      'Get the Klaviyo account details including account name and timezone. ALWAYS call this first so you have the timezone for downstream date queries.',
+    input_schema: { type: 'object' as const, properties: {}, required: [] },
+  },
+  {
+    name: 'get_metrics',
+    description:
+      'Get all available metrics in the account. Returns metric IDs you will need for query_metric_aggregates. Common metrics: Received Email, Opened Email, Clicked Email, Bounced Email, Marked Email as Spam, Unsubscribed, Placed Order, Started Checkout, Added to Cart, Viewed Product, Subscribed to List.',
+    input_schema: { type: 'object' as const, properties: {}, required: [] },
+  },
+  {
+    name: 'get_flows',
+    description: 'Get all automated flows. Returns names, statuses (live/draft/manual/paused), trigger types, dates.',
+    input_schema: { type: 'object' as const, properties: {}, required: [] },
+  },
+  {
+    name: 'get_lists',
+    description: 'Get all lists with profile counts.',
+    input_schema: { type: 'object' as const, properties: {}, required: [] },
+  },
+  {
+    name: 'get_segments',
+    description:
+      'Get all segments with their definitions, active status, and updated dates. Use this to find engaged / suppress / VIP segments.',
+    input_schema: { type: 'object' as const, properties: {}, required: [] },
+  },
   {
     name: 'get_campaigns',
     description:
-      'Get email campaigns from Klaviyo. Returns campaign names, statuses, send times. Use filter for date filtering. Example: equals(status,"Sent"),greater-or-equal(send_time,2024-01-01T00:00:00Z)',
+      'Get a flat list of campaigns with statuses and send times. Use get_campaign_report instead when you need performance data.',
     input_schema: {
       type: 'object' as const,
       properties: { filter: { type: 'string' } },
@@ -18,20 +48,47 @@ const KLAVIYO_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'get_flows',
-    description: 'Get all automated flows from Klaviyo. Returns names, statuses, trigger types.',
-    input_schema: { type: 'object' as const, properties: {}, required: [] },
+    name: 'get_campaign_report',
+    description:
+      'Run a Klaviyo Reporting API campaign-values report. Returns aggregated campaign performance for the timeframe (open_rate, click_rate, conversion_rate, revenue, etc). ALWAYS call get_metrics first to get the conversionMetricId for Placed Order.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        conversionMetricId: { type: 'string' },
+        statistics: { type: 'array', items: { type: 'string' } },
+        valueStatistics: { type: 'array', items: { type: 'string' } },
+        timeframe: {
+          type: 'object',
+          description:
+            'Either { "key": "last_30_days" | "last_3_months" | "last_12_months" | "yesterday" | etc } or { "start": "ISO", "end": "ISO" }',
+        },
+        filter: { type: 'string' },
+        groupBy: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['conversionMetricId', 'statistics'],
+    },
   },
   {
-    name: 'get_metrics',
+    name: 'get_flow_report',
     description:
-      'Get all available metrics from Klaviyo. Returns metric names + IDs. ALWAYS call this first to find the metric_id needed for query_metric_aggregates. Common metrics: "Received Email", "Opened Email", "Clicked Email", "Placed Order".',
-    input_schema: { type: 'object' as const, properties: {}, required: [] },
+      'Run a Klaviyo Reporting API flow-values report. Same shape as get_campaign_report but for flows. ALWAYS call get_metrics first for the conversionMetricId.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        conversionMetricId: { type: 'string' },
+        statistics: { type: 'array', items: { type: 'string' } },
+        valueStatistics: { type: 'array', items: { type: 'string' } },
+        timeframe: { type: 'object' },
+        filter: { type: 'string' },
+        groupBy: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['conversionMetricId', 'statistics'],
+    },
   },
   {
     name: 'query_metric_aggregates',
     description:
-      'Query aggregated metric data over a time range. You MUST call get_metrics first to find the metric_id. Filter requires datetime range. Example: greater-or-equal(datetime,2024-04-01T00:00:00Z),less-than(datetime,2024-04-08T00:00:00Z)',
+      'Query aggregated metric data over a time range. You MUST call get_metrics first to find the metric_id. Filter requires a datetime range, e.g. greater-or-equal(datetime,2024-04-01T00:00:00Z),less-than(datetime,2024-04-08T00:00:00Z). Use group_by to break down by $attributed_flow, $attributed_message, Campaign Name, Subject, etc.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -45,57 +102,6 @@ const KLAVIYO_TOOLS: Anthropic.Tool[] = [
     },
   },
 ];
-
-const REPORT_SYSTEM_PROMPT = `You are a Klaviyo performance report builder for Less Is Moore (LIM), an email marketing agency. An account manager has asked for a report. Pull the data from Klaviyo using the available tools and produce a clean, structured report ready for the client.
-
-## Hard rules
-
-1. ALWAYS pull real data using the tools. Never make up numbers.
-2. For metric queries, ALWAYS call get_metrics first to find the metric_id.
-3. Format all percentages to one decimal place. Format revenue as currency with two decimals.
-4. Be honest about what the data shows. Do not spin bad performance.
-5. Never use em dashes. Use commas, full stops, or restructure the sentence.
-6. The report is for the client. Talk like a strategist, not a chatbot.
-
-## Output format
-
-Return a markdown document with this structure. Use these EXACT delimiters so the app can render and export it.
-
-<markdown>
-# {Brand} Performance Report
-**Period:** {Start} to {End}
-
-## Summary
-A 2-3 sentence headline of the period. What happened, what worked, what to watch.
-
-## Key metrics
-| Metric | Value | Notes |
-| ------ | ----- | ----- |
-| Emails sent | ... | ... |
-| Open rate | ... | ... |
-| Click rate | ... | ... |
-| Revenue | ... | ... |
-
-## Campaign performance
-(Table or short list of top campaigns with key stats. Skip if not requested.)
-
-## Flow performance
-(Table or short list of top flows with key stats. Skip if not requested.)
-
-## Insights
-- Bullet 1
-- Bullet 2
-- Bullet 3
-
-## Recommendations
-- Action 1
-- Action 2
-</markdown>
-
-Skip any section that the user did not ask for. Add sections if they asked for something not listed above. Always include the # header, **Period** line, and Summary section.
-
-If the user's prompt is too vague to know what to include, default to a full report covering campaigns, flows, opens, clicks, and revenue for the period.
-`;
 
 interface KlaviyoToolResult {
   data?: unknown;
@@ -147,20 +153,22 @@ export async function POST(request: NextRequest) {
     const userPrompt = `Build a performance report for ${brand.name}.
 
 Period: ${startDate} to ${endDate}
+Brand category: ${brand.category || 'unknown'}
+Brand voice: ${brand.voice || 'unknown'}
 
 What the AM wants:
-${prompt || '(no specific request — produce a full performance report)'}
+${prompt || '(no specific request — run a Full Account Sweep using the playbook)'}
 
-Pull real data from Klaviyo and return the markdown document inside <markdown>...</markdown> tags.`;
+Follow the data collection playbook in your skill instructions. Pull real data from Klaviyo via the available tools. When done, return the markdown report inside <markdown>...</markdown> tags. Nothing outside the tags.`;
 
     const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userPrompt }];
 
-    // Agentic loop
-    for (let iter = 0; iter < 12; iter += 1) {
+    // Agentic loop. The full sweep can require ~20 tool calls so allow more iterations.
+    for (let iter = 0; iter < 30; iter += 1) {
       const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-5',
         max_tokens: 8000,
-        system: REPORT_SYSTEM_PROMPT,
+        system: KLAVIYO_ACCOUNT_ANALYSER_SKILL,
         tools: KLAVIYO_TOOLS,
         messages,
       });
