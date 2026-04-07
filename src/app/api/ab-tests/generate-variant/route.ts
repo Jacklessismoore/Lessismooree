@@ -90,7 +90,16 @@ THE EMAIL TO TEST (Variant A / Control):
   Subject: ${email.subject}
   Preview text: ${email.previewText || '(empty)'}
 
-${hypothesis ? `REQUIRED TEST THEME (must be used as the variable for this email): ${hypothesis}\n` : ''}
+${
+  hypothesis
+    ? `\n=== LOCKED VARIABLE (NON-NEGOTIABLE) ===
+You MUST test exactly this variable and nothing else: "${hypothesis}"
+
+This is part of a coordinated flow-wide test. Every email in this flow is testing the SAME variable. Do NOT pick a different variable even if you think another angle would perform better. Do NOT reinterpret, rename, or substitute. The "variable_tested" field in your JSON response MUST be exactly "${hypothesis}" (character for character).
+
+Your job is to rewrite the subject + preview so they meaningfully test "${hypothesis}" against the control, while staying on-brand.\n`
+    : ''
+}
 Produce Variant B for THIS email only. Return JSON in <json>...</json> tags.`;
 
     const response = await anthropic.messages.create({
@@ -132,10 +141,14 @@ Produce Variant B for THIS email only. Return JSON in <json>...</json> tags.`;
       return NextResponse.json({ error: 'No variant_subject in AI response' }, { status: 500 });
     }
 
+    // If the caller locked a theme, force the variable_tested to match it
+    // regardless of what the model returned.
+    const finalVariable = hypothesis ? hypothesis : (parsed.variable_tested || null);
+
     return NextResponse.json({
       variant_subject: parsed.variant_subject,
       variant_preview: parsed.variant_preview || '',
-      variable_tested: parsed.variable_tested || null,
+      variable_tested: finalVariable,
       hypothesis: parsed.hypothesis || null,
     });
   } catch (err) {

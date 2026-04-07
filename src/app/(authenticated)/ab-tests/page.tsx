@@ -108,6 +108,7 @@ export default function ABTestsPage() {
   const [variants, setVariants] = useState<Record<string, VariantState>>({});
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   // Past A/B test batches for the selected brand
   interface HistoryBatch {
@@ -275,15 +276,82 @@ export default function ABTestsPage() {
   // Track which flow is currently bulk-generating (null if none)
   const [bulkGeneratingFlowId, setBulkGeneratingFlowId] = useState<string | null>(null);
 
+  // Inline single-email fetch that takes an explicit theme override. Used by
+  // generateAllForFlow so the first email's picked variable can be locked in
+  // as the flow theme for subsequent emails without relying on React state.
+  const fetchVariant = useCallback(
+    async (flow: LiveFlow, email: FlowEmail, themeOverride: string | undefined) => {
+      if (!selectedBrand) return null;
+      const res = await fetch('/api/ab-tests/generate-variant', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          brandId: selectedBrand.id,
+          flowName: flow.flowName,
+          flowTriggerType: flow.triggerType,
+          email,
+          siblingEmails: flow.emails,
+          hypothesis: themeOverride || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed');
+      return data as {
+        variant_subject: string;
+        variant_preview: string;
+        variable_tested: string | null;
+        hypothesis: string | null;
+      };
+    },
+    [selectedBrand]
+  );
+
   const generateAllForFlow = useCallback(
     async (flow: LiveFlow) => {
+      if (!selectedBrand) return;
       setBulkGeneratingFlowId(flow.flowId);
       setBulkGenerating(true);
       try {
-        for (const e of flow.emails) {
-          await generateVariantForEmail(flow, e);
+        // Use typed theme if present, otherwise let email 1 pick one and lock
+        // that variable in for the remaining emails so every variant in this
+        // flow tests the same thing.
+        let effectiveTheme = (flowThemes[flow.flowId] || '').trim();
+
+        for (let i = 0; i < flow.emails.length; i += 1) {
+          const e = flow.emails[i];
+          setVariants((prev) => ({
+            ...prev,
+            [e.messageId]: { ...(prev[e.messageId] || emptyVariant()), generating: true },
+          }));
+          try {
+            const data = await fetchVariant(flow, e, effectiveTheme || undefined);
+            if (!data) break;
+
+            // If no theme was set going in and this is email 1, lock in
+            // whatever variable Claude picked as the theme for the rest.
+            if (!effectiveTheme && data.variable_tested) {
+              effectiveTheme = data.variable_tested;
+              setFlowThemes((prev) => ({ ...prev, [flow.flowId]: data.variable_tested! }));
+            }
+
+            setVariants((prev) => ({
+              ...prev,
+              [e.messageId]: {
+                variant_subject: data.variant_subject || '',
+                variant_preview: data.variant_preview || '',
+                variable_tested: data.variable_tested || null,
+                hypothesis: data.hypothesis || null,
+                generating: false,
+              },
+            }));
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Failed to generate variant');
+            setVariants((prev) => ({
+              ...prev,
+              [e.messageId]: { ...(prev[e.messageId] || emptyVariant()), generating: false },
+            }));
+          }
         }
-        toast.success(`Generated ${flow.emails.length} variant${flow.emails.length === 1 ? '' : 's'} for ${flow.flowName}`);
       } finally {
         setBulkGenerating(false);
         setBulkGeneratingFlowId(null);
@@ -311,11 +379,10 @@ export default function ABTestsPage() {
     [activeFlows]
   );
 
-  const exportAndSave = useCallback(async () => {
+  const saveBatch = useCallback(async () => {
     if (!selectedBrand || filledRows.length === 0) return;
-    setExporting(true);
+    setSaving(true);
     try {
-      // 1. Save each flow's rows as its own batch. One batch per flow = cleaner history.
       let totalSaved = 0;
       const byFlow = new Map<string, { flow: LiveFlow; rows: typeof filledRows }>();
       for (const r of filledRows) {
@@ -349,8 +416,19 @@ export default function ABTestsPage() {
         totalSaved += saveData.saved || rows.length;
       }
 
-      // 2. Generate ONE DOCX that includes every filled row
-      // Combine per-flow themes into a single summary line for the header
+      toast.success(`Saved ${totalSaved} test${totalSaved === 1 ? '' : 's'}`);
+      loadHistory(selectedBrand.id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }, [selectedBrand, filledRows, flowThemes, loadHistory]);
+
+  const exportDocx = useCallback(async () => {
+    if (!selectedBrand || filledRows.length === 0) return;
+    setExporting(true);
+    try {
       const themeSummary = Object.entries(flowThemes)
         .filter(([, t]) => t && t.trim())
         .map(([flowId, t]) => {
@@ -376,16 +454,13 @@ export default function ABTestsPage() {
           variant_preview: v.variant_preview,
         })),
       });
-
-      toast.success(`Saved ${totalSaved} tests and downloaded DOCX`);
-      // Refresh history so the new batch shows up
-      if (selectedBrand) loadHistory(selectedBrand.id);
+      toast.success('Downloaded DOCX');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Export failed');
     } finally {
       setExporting(false);
     }
-  }, [selectedBrand, filledRows, flowThemes, activeFlows, loadHistory]);
+  }, [selectedBrand, filledRows, flowThemes, activeFlows]);
 
   const deleteBatch = useCallback(
     async (batchId: string) => {
@@ -828,9 +903,18 @@ export default function ABTestsPage() {
                 <p className="text-[12px] text-[#666]">
                   {filledRows.length} of {totalEmails} variants ready
                 </p>
-                <Button onClick={exportAndSave} disabled={filledRows.length === 0 || exporting}>
-                  {exporting ? 'Saving…' : `Save & export to DOCX (${filledRows.length})`}
-                </Button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button
+                    variant="secondary"
+                    onClick={saveBatch}
+                    disabled={filledRows.length === 0 || saving}
+                  >
+                    {saving ? 'Saving…' : `Save (${filledRows.length})`}
+                  </Button>
+                  <Button onClick={exportDocx} disabled={filledRows.length === 0 || exporting}>
+                    {exporting ? 'Exporting…' : `Export to DOCX (${filledRows.length})`}
+                  </Button>
+                </div>
               </div>
             </>
           )}

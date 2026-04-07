@@ -82,20 +82,26 @@ export const MANAGEMENT_NAV = [
   { label: 'Team', href: '/team', icon: '🏷️' },
 ];
 
+// Morning and Evening blocks from SOP 01 — Account Manager Daily SOP v1.4
 export const MORNING_SOP_ITEMS = [
-  { id: 'check_inbox', label: 'Check Slack inbox for client messages', description: 'Review all unread messages and categorise actions needed' },
-  { id: 'review_calendar', label: 'Review today\'s email calendar', description: 'Confirm which emails are scheduled today and that they are ready to send' },
-  { id: 'check_designer_queue', label: 'Check designer priority queue', description: 'Review overdue or due-today designs and follow up with designers' },
-  { id: 'check_pending', label: 'Check pending emails and approvals', description: 'Follow up on any briefs or designs waiting on client sign-off' },
-  { id: 'plan_day', label: 'Plan today\'s priorities', description: 'Set your key tasks for the day based on deadlines and client needs' },
+  { id: 'slack_sweep_clients', label: 'Slack sweep — client channels', description: 'Open every assigned internal and external client channel. Read back from your last message. Do not just read unreads — open each channel individually so nothing is missed.' },
+  { id: 'slack_flag_urgent', label: 'Flag and action anything urgent', description: 'Client complaints, approval deadlines, missed sends — action these before continuing. For red flags or difficult situations, refer to the Escalation SOP (SOP 05).' },
+  { id: 'slack_pod_channel', label: 'Check pod internal channel', description: 'Read overnight messages from the team. Note anything Spencer needs to know (Kate bumps Spencer when tagged).' },
+  { id: 'figma_stage_1', label: 'Figma — Stage 1 In Progress', description: 'Review every active client card. Is a brief in place? Is the designer moving?' },
+  { id: 'figma_stage_2', label: 'Figma — Stage 2 Internal Approval', description: 'Review and approve, or send back with specific notes. Nothing leaves Stage 2 without your sign-off. Would Spencer be happy with this email?' },
+  { id: 'figma_stage_3', label: 'Figma — Stage 3 Pending Client Approval', description: 'Anything with a send date in the next 5 days not yet approved — flag and chase now before continuing.' },
+  { id: 'figma_stage_4', label: 'Figma — Stage 4 Upload', description: 'Confirm the scheduler has picked it up. Fix small copy errors directly in Figma, then message the designer or copywriter to explain what you changed.' },
+  { id: 'klaviyo_last_24h', label: 'Klaviyo — review last 24h of sends', description: 'Check open rate, click rate, and any delivery issues across all clients.' },
+  { id: 'klaviyo_next_48h', label: 'Klaviyo — confirm next 48h of scheduled sends', description: 'Correct time, correct segment, correct content.' },
+  { id: 'morning_priorities_post', label: 'Post morning priorities in pod channel', description: 'Cover red flags, blockers, escalations, and day priorities in order. Voice-memo and paste into Claude (see SOP 03) for fast formatting.' },
 ];
 
 export const EVENING_SOP_ITEMS = [
-  { id: 'check_scheduled', label: 'Check tomorrow\'s scheduled emails', description: 'Confirm all emails scheduled for tomorrow are loaded and correct in Klaviyo' },
-  { id: 'review_calendar_pm', label: 'Review tomorrow\'s calendar', description: 'Preview what is coming up tomorrow and flag anything that needs prep' },
-  { id: 'check_slack_pm', label: 'Check Slack for end-of-day messages', description: 'Clear any remaining client messages before signing off' },
-  { id: 'update_statuses', label: 'Update email statuses', description: 'Make sure all briefs, calendar items, and designer queue are up to date' },
-  { id: 'handover_notes', label: 'Note anything for tomorrow', description: 'Flag anything unfinished or time-sensitive for the morning' },
+  { id: 'slack_final_sweep', label: 'Slack final sweep — all channels', description: 'Open every assigned internal and external client channel. Read back from your last message individually. Respond to anything outstanding.' },
+  { id: 'slack_flag_morning', label: 'Flag anything for Kate or Spencer', description: 'Note anything they need first thing tomorrow.' },
+  { id: 'figma_evening_sweep', label: 'Figma evening sweep — Stage 2 & 3', description: 'Check Stage 2 and Stage 3 cards. Anything with a send in the next 5 days not yet client-approved: bump tonight.' },
+  { id: 'klaviyo_next_48h_pm', label: 'Klaviyo — review next 48h of scheduled sends', description: 'Correct send time, correct segment, correct content. Fix or flag anything wrong to Kate now — do not leave it for the morning.' },
+  { id: 'evening_sweep_confirmation', label: 'Confirm sweep + flame emoji to Spencer', description: 'Post a thumbs-up in your pod internal Slack channel, then send a flame emoji to Spencer on WhatsApp.' },
 ];
 
 export const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];

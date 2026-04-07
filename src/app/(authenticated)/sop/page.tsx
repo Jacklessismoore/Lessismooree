@@ -59,15 +59,15 @@ function getSOPStatus(timezone: string, morningDone: boolean, eveningDone: boole
     return { status: 'needs_completing', label: 'Incomplete', color: '#F59E0B', bgColor: 'bg-amber-400/10' };
   }
 
-  // Between 4am and 7am — new day, morning SOP window (not yet overdue)
-  if (hour < 7) {
+  // Between 4am and 8am — new day, morning SOP window (not yet overdue)
+  if (hour < 8) {
     if (morningDone) {
       return { status: 'morning_done', label: 'Evening pending', color: '#3B82F6', bgColor: 'bg-blue-400/10' };
     }
     return { status: 'needs_completing', label: 'Needs completing', color: '#3B82F6', bgColor: 'bg-blue-400/10' };
   }
 
-  // After 7am — morning should be done by now
+  // After 8am — morning should be done by now
   if (!morningDone) {
     return { status: 'overdue', label: 'Overdue', color: '#EF4444', bgColor: 'bg-red-400/10' };
   }
@@ -130,11 +130,15 @@ export default function SOPPage() {
       const data = await getSOPCompletions(selectedManager.id, currentMonth);
       setCompletions(data);
 
+      // Filter out any stale item IDs from older SOP versions so counts stay in range
+      const morningIds = new Set(MORNING_SOP_ITEMS.map(i => i.id));
+      const eveningIds = new Set(EVENING_SOP_ITEMS.map(i => i.id));
+
       const morningToday = data.find(c => c.date === today && c.sop_type === 'morning');
-      setMorningChecked(morningToday?.completed_items || []);
+      setMorningChecked((morningToday?.completed_items || []).filter(id => morningIds.has(id)));
 
       const eveningToday = data.find(c => c.date === today && c.sop_type === 'evening');
-      setEveningChecked(eveningToday?.completed_items || []);
+      setEveningChecked((eveningToday?.completed_items || []).filter(id => eveningIds.has(id)));
     } catch (e) {
       console.error('Failed to load SOP:', e);
     }
@@ -188,7 +192,7 @@ export default function SOPPage() {
 
   // Computed values (must be before any conditional returns for hook safety)
   const localTime = selectedManager ? getManagerLocalTime(tz) : '';
-  const morningOverdue = getManagerLocalHour(tz) >= 7;
+  const morningOverdue = getManagerLocalHour(tz) >= 8;
   const morningAllDone = morningChecked.length === MORNING_SOP_ITEMS.length;
   const eveningAllDone = eveningChecked.length === EVENING_SOP_ITEMS.length;
   const eveningLocked = !morningAllDone;
@@ -265,6 +269,21 @@ export default function SOPPage() {
   // Calendar data
   const [calYear, calMonth] = currentMonth.split('-').map(Number);
   const daysInMonth = new Date(calYear, calMonth, 0).getDate();
+  // Morning SOP is "late" if the completed_at timestamp is after 8:00 AM local time on its date.
+  const isMorningLate = (completedAt: string | null | undefined, dateStr: string): boolean => {
+    if (!completedAt) return false;
+    const localHourStr = new Date(completedAt).toLocaleString('en-US', {
+      timeZone: tz,
+      hour: 'numeric',
+      hour12: false,
+    });
+    const localDateStr = new Date(completedAt).toLocaleDateString('en-CA', { timeZone: tz });
+    // If completed on a different day than the SOP date, it's definitely late
+    if (localDateStr !== dateStr) return true;
+    const hour = parseInt(localHourStr, 10);
+    return hour >= 8;
+  };
+
   const calDays = Array.from({ length: daysInMonth }, (_, i) => {
     const day = i + 1;
     const dateStr = `${currentMonth}-${String(day).padStart(2, '0')}`;
@@ -275,12 +294,14 @@ export default function SOPPage() {
     const isFuture = dateStr > today;
     const morningDone = morning?.completed_at != null;
     const eveningDone = evening?.completed_at != null;
+    const morningLate = morningDone && isMorningLate(morning?.completed_at, dateStr);
     const morningPartial = morning && !morning.completed_at && (morning.completed_items?.length || 0) > 0;
     const eveningPartial = evening && !evening.completed_at && (evening.completed_items?.length || 0) > 0;
     const bothDone = morningDone && eveningDone;
+    const anyLate = morningLate;
     const anyPartial = morningPartial || eveningPartial || (morningDone && !eveningDone) || (!morningDone && eveningDone);
 
-    return { day, dateStr, isToday, isPast, isFuture, bothDone, anyPartial, morningDone, eveningDone };
+    return { day, dateStr, isToday, isPast, isFuture, bothDone, anyPartial, anyLate, morningDone, morningLate, eveningDone };
   });
 
   return (
@@ -339,7 +360,7 @@ export default function SOPPage() {
         <div className="glass-card rounded-xl mb-4 px-4 py-3 border-l-2 border-red-500 animate-fade-in">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
-            <p className="text-[11px] text-red-400 font-medium">Morning SOP overdue. Should be completed by 7:00 AM</p>
+            <p className="text-[11px] text-red-400 font-medium">Morning SOP overdue. Should be completed by 8:00 AM</p>
           </div>
         </div>
       )}
@@ -362,7 +383,7 @@ export default function SOPPage() {
       {/* Checklist */}
       <Card className="mb-6">
         <p className="label-text mb-4">
-          {activeTab === 'morning' ? 'Morning Checklist — Due by 7:00 AM' : 'Evening Checklist'}
+          {activeTab === 'morning' ? 'Morning Block — Due by 8:00 AM' : 'Evening Block — Before closing laptop'}
         </p>
         <div className="space-y-1">
           {activeItems.map((item) => {
@@ -432,14 +453,16 @@ export default function SOPPage() {
             return Array.from({ length: offset }, (_, i) => <div key={`empty-${i}`} />);
           })()}
 
-          {calDays.map(({ day, isToday, isPast, isFuture, bothDone, anyPartial, morningDone, eveningDone }) => (
+          {calDays.map(({ day, isToday, isPast, isFuture, bothDone, anyPartial, anyLate, morningDone, morningLate, eveningDone }) => (
             <div
               key={day}
               className={`rounded-xl p-1.5 sm:p-2 flex flex-col items-center justify-center transition-all duration-200 min-h-[52px] sm:min-h-[64px] ${
                 isToday ? 'ring-1 ring-white/25' : ''
               } ${
-                bothDone
+                bothDone && !anyLate
                   ? 'bg-green-500/15'
+                  : bothDone && anyLate
+                  ? 'bg-orange-500/10'
                   : anyPartial
                   ? 'bg-amber-500/10'
                   : isPast && !isFuture
@@ -448,7 +471,8 @@ export default function SOPPage() {
               }`}
             >
               <span className={`text-[11px] font-semibold mb-1 ${
-                bothDone ? 'text-green-400' :
+                bothDone && !anyLate ? 'text-green-400' :
+                bothDone && anyLate ? 'text-orange-400' :
                 anyPartial ? 'text-amber-400' :
                 isPast && !isFuture ? 'text-red-400/50' :
                 isFuture ? 'text-[#333]' : 'text-[#999]'
@@ -458,9 +482,13 @@ export default function SOPPage() {
               {(isPast || isToday) && !isFuture && (
                 <div className="flex flex-col gap-0.5 w-full">
                   <div className={`flex items-center justify-center gap-1 rounded px-1 py-0.5 ${
+                    morningDone && morningLate ? 'bg-orange-500/25' :
                     morningDone ? 'bg-green-500/20' : 'bg-white/[0.03]'
                   }`}>
-                    <span className={`text-[7px] font-bold uppercase ${morningDone ? 'text-green-400' : 'text-[#333]'}`}>AM</span>
+                    <span className={`text-[7px] font-bold uppercase ${
+                      morningDone && morningLate ? 'text-orange-400' :
+                      morningDone ? 'text-green-400' : 'text-[#333]'
+                    }`}>AM</span>
                   </div>
                   <div className={`flex items-center justify-center gap-1 rounded px-1 py-0.5 ${
                     eveningDone ? 'bg-green-500/20' : 'bg-white/[0.03]'
@@ -480,6 +508,12 @@ export default function SOPPage() {
               <span className="text-[5px] text-green-400 font-bold">AM</span>
             </div>
             <span className="text-[9px] text-[#555]">Completed</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-3 h-3 rounded bg-orange-500/25 flex items-center justify-center">
+              <span className="text-[5px] text-orange-400 font-bold">AM</span>
+            </div>
+            <span className="text-[9px] text-[#555]">Late</span>
           </div>
           <div className="flex items-center gap-1.5">
             <div className="w-3 h-3 rounded bg-amber-500/10" />
