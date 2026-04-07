@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useApp } from '@/lib/app-context';
 import { Brand } from '@/lib/types';
 import { Card } from '@/components/ui/card';
@@ -9,6 +9,170 @@ import { PageHeader } from '@/components/ui/page-header';
 import { BrandCard } from '@/components/ui/brand-card';
 import { exportReportDocx } from '@/lib/export-report-docx';
 import toast from 'react-hot-toast';
+
+// =====================================================================
+// Lightweight markdown renderer for the report. Handles headings, bold,
+// pipe tables, and bullet lists. No new dependencies.
+// =====================================================================
+
+function renderInline(text: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  let i = 0;
+  let key = 0;
+  while (i < text.length) {
+    const open = text.indexOf('**', i);
+    if (open === -1) {
+      out.push(<span key={key++}>{text.slice(i)}</span>);
+      break;
+    }
+    if (open > i) out.push(<span key={key++}>{text.slice(i, open)}</span>);
+    const close = text.indexOf('**', open + 2);
+    if (close === -1) {
+      out.push(<span key={key++}>{text.slice(open)}</span>);
+      break;
+    }
+    out.push(
+      <strong key={key++} className="text-white">
+        {text.slice(open + 2, close)}
+      </strong>
+    );
+    i = close + 2;
+  }
+  return out;
+}
+
+function MarkdownReport({ markdown }: { markdown: string }) {
+  const blocks = useMemo(() => {
+    const lines = markdown.split('\n');
+    const out: React.ReactNode[] = [];
+    let i = 0;
+    let key = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Headings
+      if (/^####\s/.test(trimmed)) {
+        out.push(
+          <h4 key={key++} className="text-[12px] font-bold text-white uppercase tracking-wider mt-5 mb-2">
+            {trimmed.replace(/^#+\s*/, '')}
+          </h4>
+        );
+        i += 1;
+        continue;
+      }
+      if (/^###\s/.test(trimmed)) {
+        out.push(
+          <h3 key={key++} className="text-sm font-bold text-white mt-5 mb-2">
+            {trimmed.replace(/^#+\s*/, '')}
+          </h3>
+        );
+        i += 1;
+        continue;
+      }
+      if (/^##\s/.test(trimmed)) {
+        out.push(
+          <h2 key={key++} className="text-base font-bold text-white mt-6 mb-3 uppercase tracking-wider">
+            {trimmed.replace(/^#+\s*/, '')}
+          </h2>
+        );
+        i += 1;
+        continue;
+      }
+      if (/^#\s/.test(trimmed)) {
+        out.push(
+          <h1 key={key++} className="text-xl font-bold text-white mt-6 mb-3">
+            {trimmed.replace(/^#+\s*/, '')}
+          </h1>
+        );
+        i += 1;
+        continue;
+      }
+
+      // Pipe table
+      if (trimmed.startsWith('|')) {
+        const tbl: string[] = [];
+        while (i < lines.length && lines[i].trim().startsWith('|')) {
+          tbl.push(lines[i]);
+          i += 1;
+        }
+        const rows = tbl
+          .filter((l) => !/^\|\s*-+/.test(l.trim()))
+          .map((l) =>
+            l
+              .trim()
+              .replace(/^\||\|$/g, '')
+              .split('|')
+              .map((c) => c.trim())
+          );
+        if (rows.length > 0) {
+          const [header, ...body] = rows;
+          out.push(
+            <div key={key++} className="my-4 overflow-x-auto">
+              <table className="w-full text-[12px] border border-white/[0.06] rounded-lg overflow-hidden">
+                <thead className="bg-[#0a0a0a]">
+                  <tr>
+                    {header.map((c, ci) => (
+                      <th key={ci} className="text-left p-2 text-[10px] uppercase tracking-wider text-[#888] font-bold border-b border-white/[0.06]">
+                        {renderInline(c)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {body.map((row, ri) => (
+                    <tr key={ri} className="border-b border-white/[0.04] last:border-b-0">
+                      {row.map((c, ci) => (
+                        <td key={ci} className="p-2 text-[#ccc] align-top">
+                          {renderInline(c)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        continue;
+      }
+
+      // Bullet
+      if (/^[-*]\s/.test(trimmed)) {
+        const items: string[] = [];
+        while (i < lines.length && /^[-*]\s/.test(lines[i].trim())) {
+          items.push(lines[i].trim().replace(/^[-*]\s*/, ''));
+          i += 1;
+        }
+        out.push(
+          <ul key={key++} className="list-disc pl-5 my-2 space-y-1 text-[12px] text-[#ccc]">
+            {items.map((it, ii) => (
+              <li key={ii}>{renderInline(it)}</li>
+            ))}
+          </ul>
+        );
+        continue;
+      }
+
+      // Empty line
+      if (!trimmed) {
+        i += 1;
+        continue;
+      }
+
+      // Paragraph
+      out.push(
+        <p key={key++} className="text-[12px] text-[#ccc] my-2 leading-relaxed">
+          {renderInline(trimmed)}
+        </p>
+      );
+      i += 1;
+    }
+    return out;
+  }, [markdown]);
+
+  return <div className="report-rendered">{blocks}</div>;
+}
 
 // Default to last 30 days
 function defaultStart() {
@@ -89,6 +253,7 @@ export default function ReportsPage() {
   const [building, setBuilding] = useState(false);
   const [reportMd, setReportMd] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
 
   const handleSelectBrand = (brand: Brand) => {
     if (!brand.klaviyo_api_key) {
@@ -103,6 +268,7 @@ export default function ReportsPage() {
     if (!selectedBrand) return;
     setBuilding(true);
     setReportMd(null);
+    const loadingToast = toast.loading('Building report. This can take 30-50 seconds…');
     try {
       const res = await fetch('/api/reports/build', {
         method: 'POST',
@@ -114,12 +280,25 @@ export default function ReportsPage() {
           endDate,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed');
+      let data: { markdown?: string; error?: string; raw?: string } = {};
+      try {
+        data = await res.json();
+      } catch {
+        // gateway timeout returns no body
+      }
+      if (!res.ok) {
+        throw new Error(
+          data.error ||
+            (res.status === 504
+              ? 'The Klaviyo report timed out (60s). Try a narrower request or shorter date range.'
+              : `Failed (${res.status})`)
+        );
+      }
+      if (!data.markdown) throw new Error('AI returned no markdown');
       setReportMd(data.markdown);
-      toast.success('Report ready');
+      toast.success('Report ready', { id: loadingToast });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to build report');
+      toast.error(err instanceof Error ? err.message : 'Failed to build report', { id: loadingToast });
     } finally {
       setBuilding(false);
     }
@@ -228,18 +407,31 @@ export default function ReportsPage() {
           <Card className="p-6 space-y-4">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <h3 className="text-sm font-bold uppercase tracking-wider">Generated report</h3>
-              <Button onClick={downloadDocx} disabled={exporting}>
-                {exporting ? 'Exporting…' : 'Export to DOCX'}
-              </Button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button variant="secondary" onClick={() => setShowRaw((v) => !v)}>
+                  {showRaw ? 'Show formatted' : 'Show raw markdown'}
+                </Button>
+                <Button onClick={downloadDocx} disabled={exporting}>
+                  {exporting ? 'Exporting…' : 'Export to DOCX'}
+                </Button>
+              </div>
             </div>
-            <textarea
-              value={reportMd}
-              onChange={(e) => setReportMd(e.target.value)}
-              rows={28}
-              className="w-full bg-[#0a0a0a] border border-white/[0.06] rounded-md p-4 text-[12px] text-[#ccc] font-mono"
-            />
+
+            {showRaw ? (
+              <textarea
+                value={reportMd}
+                onChange={(e) => setReportMd(e.target.value)}
+                rows={28}
+                className="w-full bg-[#0a0a0a] border border-white/[0.06] rounded-md p-4 text-[12px] text-[#ccc] font-mono"
+              />
+            ) : (
+              <div className="bg-[#0a0a0a] border border-white/[0.06] rounded-md p-6 max-h-[700px] overflow-y-auto">
+                <MarkdownReport markdown={reportMd} />
+              </div>
+            )}
+
             <p className="text-[11px] text-[#555]">
-              You can edit the markdown before exporting. Tables, headings, and bullets are preserved in the DOCX.
+              Toggle to raw markdown if you want to edit the report before exporting. The DOCX will reflect whatever is in the markdown.
             </p>
           </Card>
         )}

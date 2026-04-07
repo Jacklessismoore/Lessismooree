@@ -4,6 +4,9 @@ import { createClient } from '@/lib/supabase/server';
 import { executeKlaviyoTool } from '@/lib/klaviyo';
 import { KLAVIYO_ACCOUNT_ANALYSER_SKILL } from '@/lib/skills/klaviyo-account-analyser';
 
+// Vercel Hobby plan max. The Full Account Sweep can take ~30-50s of wall time.
+export const maxDuration = 60;
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 // Tool catalog wired to the klaviyo-account-analyser skill. Tool names match
@@ -198,27 +201,29 @@ Follow the data collection playbook in your skill instructions. Pull real data f
         });
       }
 
-      // Run tools
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-      for (const block of toolUseBlocks) {
-        try {
-          const result = (await timeoutPromise(
-            executeKlaviyoTool(klaviyoApiKey, block.name, block.input as Record<string, unknown>),
-            25_000
-          )) as KlaviyoToolResult | null;
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: JSON.stringify(result ?? { error: 'Request timed out' }).slice(0, 80_000),
-          });
-        } catch (err) {
-          toolResults.push({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
-          });
-        }
-      }
+      // Run all tool calls for this iteration in parallel — Klaviyo's API
+      // tolerates this and it cuts a 50s sweep down to 10-15s.
+      const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
+        toolUseBlocks.map(async (block) => {
+          try {
+            const result = (await timeoutPromise(
+              executeKlaviyoTool(klaviyoApiKey, block.name, block.input as Record<string, unknown>),
+              20_000
+            )) as KlaviyoToolResult | null;
+            return {
+              type: 'tool_result' as const,
+              tool_use_id: block.id,
+              content: JSON.stringify(result ?? { error: 'Request timed out' }).slice(0, 80_000),
+            };
+          } catch (err) {
+            return {
+              type: 'tool_result' as const,
+              tool_use_id: block.id,
+              content: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
+            };
+          }
+        })
+      );
 
       messages.push({ role: 'assistant', content: response.content });
       messages.push({ role: 'user', content: toolResults });
