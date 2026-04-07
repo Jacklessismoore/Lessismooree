@@ -1,5 +1,5 @@
 import { createClient } from './supabase/client';
-import { Pod, Manager, Designer, Brand, Strategy, CalendarItem, BriefHistory, BrandProduct, EmailStatus, InboxItem, SOPCompletion, EmailReference } from './types';
+import { Pod, Manager, Designer, KlaviyoTech, Brand, Strategy, CalendarItem, BriefHistory, BrandProduct, EmailStatus, InboxItem, SOPCompletion, EmailReference } from './types';
 
 function supabase() {
   const client = createClient();
@@ -78,6 +78,31 @@ export async function createDesigner(name: string): Promise<Designer> {
 
 export async function deleteDesigner(id: string): Promise<void> {
   const { error } = await supabase().from('designers').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// Klaviyo Technicians
+export async function getKlaviyoTechs(): Promise<KlaviyoTech[]> {
+  try {
+    const { data, error } = await supabase().from('klaviyo_techs').select('*').order('name');
+    if (error) {
+      if (error.code === 'PGRST205' || error.code === '42P01') return [];
+      throw error;
+    }
+    return data ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function createKlaviyoTech(name: string): Promise<KlaviyoTech> {
+  const { data, error } = await supabase().from('klaviyo_techs').insert({ name }).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteKlaviyoTech(id: string): Promise<void> {
+  const { error } = await supabase().from('klaviyo_techs').delete().eq('id', id);
   if (error) throw error;
 }
 

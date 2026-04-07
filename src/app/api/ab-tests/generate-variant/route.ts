@@ -90,7 +90,7 @@ THE EMAIL TO TEST (Variant A / Control):
   Subject: ${email.subject}
   Preview text: ${email.previewText || '(empty)'}
 
-${hypothesis ? `AM HINT: ${hypothesis}\n` : ''}
+${hypothesis ? `REQUIRED TEST THEME (must be used as the variable for this email): ${hypothesis}\n` : ''}
 Produce Variant B for THIS email only. Return JSON in <json>...</json> tags.`;
 
     const response = await anthropic.messages.create({

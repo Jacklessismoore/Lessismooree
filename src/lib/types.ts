@@ -107,6 +107,12 @@ export interface Designer {
   created_at: string;
 }
 
+export interface KlaviyoTech {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
 export interface EmailReference {
   id: string;
   title: string;

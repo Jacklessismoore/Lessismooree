@@ -109,6 +109,29 @@ export default function ABTestsPage() {
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  // Past A/B test batches for the selected brand
+  interface HistoryBatch {
+    batch_id: string;
+    created_at: string;
+    hypothesis: string | null;
+    num_tests: number;
+    tests: Array<{
+      id: string;
+      flow_id: string;
+      flow_name: string;
+      flow_message_id: string;
+      flow_message_label: string | null;
+      original_subject: string | null;
+      original_preview: string | null;
+      variant_subject: string;
+      variant_preview: string | null;
+      hypothesis: string | null;
+    }>;
+  }
+  const [history, setHistory] = useState<HistoryBatch[] | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [reExportingBatchId, setReExportingBatchId] = useState<string | null>(null);
+
   const allowed = role === 'account_manager' || role === 'klaviyo_tech';
 
   // Reset when brand changes
@@ -118,7 +141,26 @@ export default function ABTestsPage() {
     setActiveFlows([]);
     setVariants({});
     setFlowThemes({});
+    setHistory(null);
   }, [selectedBrand?.id]);
+
+  // Load A/B test history whenever a brand is selected
+  const loadHistory = useCallback(async (brandId: string) => {
+    setLoadingHistory(true);
+    try {
+      const res = await fetch(`/api/ab-tests?brandId=${brandId}`);
+      const data = await res.json();
+      if (res.ok) setHistory(data.batches || []);
+    } catch {
+      // non-fatal
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedBrand) loadHistory(selectedBrand.id);
+  }, [selectedBrand, loadHistory]);
 
   // Seed an empty variant row for every email in every active flow
   useEffect(() => {
@@ -228,23 +270,25 @@ export default function ABTestsPage() {
     [selectedBrand, flowThemes]
   );
 
-  const generateAll = useCallback(async () => {
-    if (activeFlows.length === 0) return;
-    setBulkGenerating(true);
-    try {
-      // Run sequentially across every email in every active flow
-      let count = 0;
-      for (const f of activeFlows) {
-        for (const e of f.emails) {
-          await generateVariantForEmail(f, e);
-          count += 1;
+  // Track which flow is currently bulk-generating (null if none)
+  const [bulkGeneratingFlowId, setBulkGeneratingFlowId] = useState<string | null>(null);
+
+  const generateAllForFlow = useCallback(
+    async (flow: LiveFlow) => {
+      setBulkGeneratingFlowId(flow.flowId);
+      setBulkGenerating(true);
+      try {
+        for (const e of flow.emails) {
+          await generateVariantForEmail(flow, e);
         }
+        toast.success(`Generated ${flow.emails.length} variant${flow.emails.length === 1 ? '' : 's'} for ${flow.flowName}`);
+      } finally {
+        setBulkGenerating(false);
+        setBulkGeneratingFlowId(null);
       }
-      toast.success(`Generated variants for ${count} emails`);
-    } finally {
-      setBulkGenerating(false);
-    }
-  }, [activeFlows, generateVariantForEmail]);
+    },
+    [generateVariantForEmail]
+  );
 
   // Every row that currently has a variant filled in, across all active flows
   const filledRows = useMemo(() => {
@@ -332,12 +376,45 @@ export default function ABTestsPage() {
       });
 
       toast.success(`Saved ${totalSaved} tests and downloaded DOCX`);
+      // Refresh history so the new batch shows up
+      if (selectedBrand) loadHistory(selectedBrand.id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Export failed');
     } finally {
       setExporting(false);
     }
-  }, [selectedBrand, filledRows, flowThemes, activeFlows]);
+  }, [selectedBrand, filledRows, flowThemes, activeFlows, loadHistory]);
+
+  const reExportBatch = useCallback(
+    async (batch: HistoryBatch) => {
+      if (!selectedBrand) return;
+      setReExportingBatchId(batch.batch_id);
+      try {
+        await exportABTestDocx({
+          brandName: selectedBrand.name,
+          createdAt: batch.created_at,
+          hypothesis: batch.hypothesis,
+          managerName: null,
+          tests: batch.tests.map((t) => ({
+            flow_name: t.flow_name,
+            flow_message_label: t.flow_message_label,
+            flow_message_id: t.flow_message_id,
+            hypothesis: t.hypothesis,
+            original_subject: t.original_subject,
+            original_preview: t.original_preview,
+            variant_subject: t.variant_subject,
+            variant_preview: t.variant_preview,
+          })),
+        });
+        toast.success('Downloaded DOCX');
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Export failed');
+      } finally {
+        setReExportingBatchId(null);
+      }
+    },
+    [selectedBrand]
+  );
 
   if (authLoading) return <div className="p-10 text-[#555]">Loading…</div>;
 
@@ -500,15 +577,10 @@ export default function ABTestsPage() {
                 </Button>
               </div>
 
-              <div className="flex justify-end">
-                <Button onClick={generateAll} disabled={bulkGenerating}>
-                  {bulkGenerating ? 'Generating all…' : '✨ Generate variants for all emails'}
-                </Button>
-              </div>
-
               {activeFlows.map((flow) => {
                 const theme = flowThemes[flow.flowId] || '';
                 const suggesting = suggestingThemeFor === flow.flowId;
+                const thisFlowBulk = bulkGeneratingFlowId === flow.flowId;
                 return (
                   <div key={flow.flowId} className="space-y-3">
                     <div className="flex items-baseline justify-between flex-wrap gap-2">
@@ -518,25 +590,36 @@ export default function ABTestsPage() {
                       </span>
                     </div>
 
-                    {/* Per-flow test theme */}
+                    {/* What are you testing? — per flow */}
                     <Card className="p-4">
-                      <label className="label-text block mb-2">Test theme for this flow (optional)</label>
+                      <label className="label-text block mb-2">What are you testing in this flow?</label>
                       <textarea
                         value={theme}
                         onChange={(e) =>
                           setFlowThemes((prev) => ({ ...prev, [flow.flowId]: e.target.value }))
                         }
                         rows={2}
-                        placeholder="e.g. test first-name personalization across every email in this flow"
+                        placeholder="e.g. first name personalization, urgency, curiosity vs clarity"
                         className="w-full bg-[#0f0f0f] border border-white/[0.08] rounded-md px-3 py-2 text-sm"
                       />
-                      <div className="mt-2 flex items-center gap-2">
+                      <p className="text-[11px] text-[#555] mt-1">
+                        Every email in this flow will test the same variable so results are comparable.
+                      </p>
+                      <div className="mt-3 flex items-center gap-2 flex-wrap">
                         <Button
                           variant="secondary"
                           onClick={() => suggestThemeForFlow(flow)}
-                          disabled={suggesting}
+                          disabled={suggesting || thisFlowBulk}
                         >
                           {suggesting ? 'Thinking…' : '✨ Suggest with AI'}
+                        </Button>
+                        <Button
+                          onClick={() => generateAllForFlow(flow)}
+                          disabled={thisFlowBulk || suggesting}
+                        >
+                          {thisFlowBulk
+                            ? 'Generating…'
+                            : `✨ Generate variants (${flow.emails.length})`}
                         </Button>
                       </div>
                     </Card>
@@ -728,6 +811,59 @@ export default function ABTestsPage() {
                 </Button>
               </div>
             </>
+          )}
+
+          {/* History — past A/B test batches for this brand */}
+          {history !== null && (
+            <Card className="p-6">
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <h3 className="text-sm font-bold uppercase tracking-wider">Past A/B tests</h3>
+                <span className="text-[10px] uppercase tracking-wider text-[#666]">
+                  {history.length} run{history.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              {loadingHistory ? (
+                <p className="text-[12px] text-[#555]">Loading…</p>
+              ) : history.length === 0 ? (
+                <p className="text-[12px] text-[#555]">No A/B tests exported for this client yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {history.map((batch) => {
+                    const flowNames = Array.from(new Set(batch.tests.map((t) => t.flow_name)));
+                    const date = new Date(batch.created_at).toLocaleDateString('en-AU', {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                    });
+                    return (
+                      <div
+                        key={batch.batch_id}
+                        className="flex items-start justify-between gap-3 p-3 rounded-lg border border-white/[0.06] bg-[#0f0f0f]"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[13px] text-white font-semibold">
+                            {flowNames.join(', ')}
+                          </p>
+                          <p className="text-[11px] text-[#666] mt-0.5">
+                            {date} · {batch.num_tests} test{batch.num_tests === 1 ? '' : 's'}
+                          </p>
+                          {batch.hypothesis && (
+                            <p className="text-[11px] text-[#888] mt-1 italic">{batch.hypothesis}</p>
+                          )}
+                        </div>
+                        <Button
+                          variant="secondary"
+                          onClick={() => reExportBatch(batch)}
+                          disabled={reExportingBatchId === batch.batch_id}
+                        >
+                          {reExportingBatchId === batch.batch_id ? 'Exporting…' : 'Export DOCX'}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
           )}
         </div>
       )}

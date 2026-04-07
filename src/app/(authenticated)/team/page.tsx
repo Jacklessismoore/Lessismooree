@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/lib/app-context';
 import { useAuth, UserRole, ROLE_LABELS } from '@/lib/auth-context';
-import { createPod, deletePod, createManager, deleteManager, createDesigner, deleteDesigner, updateManagerTimezone, updateManagerPod } from '@/lib/db';
+import { createPod, deletePod, createManager, deleteManager, createDesigner, deleteDesigner, createKlaviyoTech, deleteKlaviyoTech, updateManagerTimezone, updateManagerPod } from '@/lib/db';
 import { createClient } from '@/lib/supabase/client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,11 +12,12 @@ import { ConfirmDialog } from '@/components/ui/modal';
 import toast from 'react-hot-toast';
 
 export default function TeamPage() {
-  const { pods, managers, designers, brands, refreshPods, refreshManagers, refreshDesigners } = useApp();
+  const { pods, managers, designers, klaviyoTechs, brands, refreshPods, refreshManagers, refreshDesigners, refreshKlaviyoTechs } = useApp();
   const [newPod, setNewPod] = useState('');
   const [newManager, setNewManager] = useState('');
   const [newDesigner, setNewDesigner] = useState('');
-  const [deleteTarget, setDeleteTarget] = useState<{ type: 'pod' | 'manager' | 'designer'; id: string; name: string } | null>(null);
+  const [newKlaviyoTech, setNewKlaviyoTech] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<{ type: 'pod' | 'manager' | 'designer' | 'klaviyo_tech'; id: string; name: string } | null>(null);
 
   const handleAddPod = async () => {
     if (!newPod.trim()) return;
@@ -54,6 +55,18 @@ export default function TeamPage() {
     }
   };
 
+  const handleAddKlaviyoTech = async () => {
+    if (!newKlaviyoTech.trim()) return;
+    try {
+      await createKlaviyoTech(newKlaviyoTech.trim());
+      setNewKlaviyoTech('');
+      refreshKlaviyoTechs();
+      toast.success('Klaviyo technician added');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to add technician');
+    }
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
@@ -63,11 +76,21 @@ export default function TeamPage() {
       } else if (deleteTarget.type === 'manager') {
         await deleteManager(deleteTarget.id);
         refreshManagers();
-      } else {
+      } else if (deleteTarget.type === 'designer') {
         await deleteDesigner(deleteTarget.id);
         refreshDesigners();
+      } else {
+        await deleteKlaviyoTech(deleteTarget.id);
+        refreshKlaviyoTechs();
       }
-      const label = deleteTarget.type === 'pod' ? 'Pod' : deleteTarget.type === 'manager' ? 'Manager' : 'Designer';
+      const label =
+        deleteTarget.type === 'pod'
+          ? 'Pod'
+          : deleteTarget.type === 'manager'
+          ? 'Manager'
+          : deleteTarget.type === 'designer'
+          ? 'Designer'
+          : 'Klaviyo technician';
       toast.success(`${label} removed`);
       setDeleteTarget(null);
     } catch (e) {
@@ -77,7 +100,7 @@ export default function TeamPage() {
 
   return (
     <div>
-      <PageHeader title="Pods & Team" subtitle="Manage pods, account managers & designers" />
+      <PageHeader title="Pods & Team" subtitle="Manage pods, account managers, designers & Klaviyo technicians" />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         {/* Pods */}
@@ -216,6 +239,39 @@ export default function TeamPage() {
             <Button size="sm" onClick={handleAddDesigner}>Add</Button>
           </div>
         </Card>
+
+        {/* Klaviyo Technicians */}
+        <Card>
+          <p className="heading text-sm mb-4">Klaviyo Technicians</p>
+          <div className="space-y-2 mb-4">
+            {klaviyoTechs.map(tech => (
+              <div key={tech.id} className="flex items-center justify-between py-2 px-3 bg-black/30 rounded">
+                <div>
+                  <span className="text-sm text-white">{tech.name}</span>
+                </div>
+                <button
+                  onClick={() => setDeleteTarget({ type: 'klaviyo_tech', id: tech.id, name: tech.name })}
+                  className="text-[#555] hover:text-red-500 text-xs transition-colors"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            {klaviyoTechs.length === 0 && (
+              <p className="text-[11px] text-[#444]">No technicians yet.</p>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={newKlaviyoTech}
+              onChange={e => setNewKlaviyoTech(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAddKlaviyoTech()}
+              placeholder="New Klaviyo technician name..."
+              className="flex-1 bg-black border border-[#252525] rounded px-3 py-2 text-xs text-white placeholder:text-[#555] focus:outline-none focus:border-white"
+            />
+            <Button size="sm" onClick={handleAddKlaviyoTech}>Add</Button>
+          </div>
+        </Card>
       </div>
 
       {/* User Roles */}
@@ -225,7 +281,15 @@ export default function TeamPage() {
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
-        title={`Remove ${deleteTarget?.type === 'pod' ? 'Pod' : deleteTarget?.type === 'manager' ? 'Manager' : 'Designer'}`}
+        title={`Remove ${
+          deleteTarget?.type === 'pod'
+            ? 'Pod'
+            : deleteTarget?.type === 'manager'
+            ? 'Manager'
+            : deleteTarget?.type === 'designer'
+            ? 'Designer'
+            : 'Klaviyo technician'
+        }`}
         message={`Are you sure you want to remove "${deleteTarget?.name}"?`}
         confirmLabel="Remove"
       />

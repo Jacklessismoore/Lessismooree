@@ -22,7 +22,9 @@ Your job: produce ONE A/B test variant (Variant B) for the ONE email the user gi
 
 ## Pick the variable
 
-Audit the current subject line + preview text and pick ONE of these to test, based on what is missing or weak:
+**CRITICAL RULE: If the user provides a "REQUIRED TEST THEME" in the prompt, you MUST test that exact variable on this email. Do not pick a different variable. Every email in the flow will be tested on the same variable so results can be compared across the whole flow.**
+
+If no theme is provided, audit the current subject line + preview text and pick ONE of these to test, based on what is missing or weak:
 
 - Personalization: add or remove first name (use \`{{ first_name|default:"Hey" }}\`)
 - Curiosity vs clarity: flip whichever the current SL is
@@ -49,7 +51,7 @@ Return ONLY a JSON object inside <json>...</json> tags. No prose before or after
 }
 </json>
 
-If a hypothesis was provided by the user, factor it into your reasoning but you can still pick a different lever if there is a clearly stronger opportunity for this specific email.
+If a REQUIRED TEST THEME is provided by the user, you MUST test exactly that variable. Do not override it. The user is running a coordinated test across every email in the flow and needs consistency.
 `;
 
 // =========================================================================
