@@ -129,6 +129,13 @@ export async function POST(request: NextRequest) {
     ];
     const reportValueStats = ['conversion_value', 'revenue_per_recipient', 'average_order_value'];
 
+    // Look for the form-specific metrics Klaviyo usually exposes
+    const formViewedId = findMetricId(metrics, 'Viewed Form') || findMetricId(metrics, 'Form viewed by profile');
+    const formSubmittedId =
+      findMetricId(metrics, 'Submitted Form') ||
+      findMetricId(metrics, 'Form submitted by profile') ||
+      findMetricId(metrics, 'Filled Out Form');
+
     const [
       flowsRes,
       segmentsRes,
@@ -136,6 +143,10 @@ export async function POST(request: NextRequest) {
       flowReportRes,
       revenueByFlowRes,
       revenueTotalRes,
+      subscribesByFormRes,
+      formViewedByFormRes,
+      formSubmittedByFormRes,
+      bouncesDailyRes,
     ] = await Promise.all([
       safe(getFlows(apiKey), 'get_flows'),
       safe(getSegments(apiKey), 'get_segments'),
@@ -176,13 +187,60 @@ export async function POST(request: NextRequest) {
         }),
         'revenue_total'
       ),
+      // Form-related metrics (pop-up performance)
+      subscribedId
+        ? safe(
+            queryMetricAggregates(apiKey, {
+              metric_id: subscribedId,
+              measurements: ['count', 'unique'],
+              interval: 'month',
+              filter: dateFilter,
+              group_by: ['form_id'],
+            }),
+            'subscribes_by_form'
+          )
+        : Promise.resolve({ error: 'no "Subscribed to List" metric' }),
+      formViewedId
+        ? safe(
+            queryMetricAggregates(apiKey, {
+              metric_id: formViewedId,
+              measurements: ['count', 'unique'],
+              interval: 'month',
+              filter: dateFilter,
+              group_by: ['form_id'],
+            }),
+            'form_viewed_by_form'
+          )
+        : Promise.resolve({ error: 'no form-viewed metric' }),
+      formSubmittedId
+        ? safe(
+            queryMetricAggregates(apiKey, {
+              metric_id: formSubmittedId,
+              measurements: ['count', 'unique'],
+              interval: 'month',
+              filter: dateFilter,
+              group_by: ['form_id'],
+            }),
+            'form_submitted_by_form'
+          )
+        : Promise.resolve({ error: 'no form-submitted metric' }),
+      // Deliverability / list signals
+      bouncedId
+        ? safe(
+            queryMetricAggregates(apiKey, {
+              metric_id: bouncedId,
+              measurements: ['count'],
+              interval: 'day',
+              filter: dateFilter,
+            }),
+            'bounces_daily'
+          )
+        : Promise.resolve({ error: 'no bounced metric' }),
     ]);
     // unused metric IDs swallowed to avoid lint warnings
     void openedEmailId;
-    void bouncedId;
     void spamId;
     void receivedId;
-    void subscribedId;
 
     // ─── PHASE 3: bundle into a structured JSON payload for Claude ───
     // Each section is trimmed individually so we keep useful data from every
@@ -191,30 +249,53 @@ export async function POST(request: NextRequest) {
   "brand": ${JSON.stringify({ name: brand.name, category: brand.category || 'unknown', voice: brand.voice || 'unknown' })},
   "period": ${JSON.stringify({ start: startDate, end: endDate })},
   "account": ${stringifyTrimmed(accountRes, 1500)},
-  "flows": ${stringifyTrimmed(flowsRes, 8000)},
-  "segments": ${stringifyTrimmed(segmentsRes, 5000)},
-  "campaign_report": ${stringifyTrimmed(campaignReportRes, 12000)},
-  "flow_report": ${stringifyTrimmed(flowReportRes, 12000)},
-  "revenue_by_flow": ${stringifyTrimmed(revenueByFlowRes, 4000)},
-  "revenue_total": ${stringifyTrimmed(revenueTotalRes, 2000)}
+  "flows": ${stringifyTrimmed(flowsRes, 6000)},
+  "segments": ${stringifyTrimmed(segmentsRes, 4000)},
+  "campaign_report": ${stringifyTrimmed(campaignReportRes, 10000)},
+  "flow_report": ${stringifyTrimmed(flowReportRes, 10000)},
+  "revenue_by_flow": ${stringifyTrimmed(revenueByFlowRes, 3000)},
+  "revenue_total": ${stringifyTrimmed(revenueTotalRes, 2000)},
+  "form_subscribes_by_form": ${stringifyTrimmed(subscribesByFormRes, 3000)},
+  "form_viewed_by_form": ${stringifyTrimmed(formViewedByFormRes, 3000)},
+  "form_submitted_by_form": ${stringifyTrimmed(formSubmittedByFormRes, 3000)},
+  "bounces_daily": ${stringifyTrimmed(bouncesDailyRes, 2000)}
 }`;
 
     // ─── PHASE 4: ONE Claude call to analyse + format ───
-    const userPrompt = `Build a performance report for ${brand.name}.
+    const hasPrompt = !!prompt?.trim();
+    const userPrompt = `Build a Klaviyo performance report for ${brand.name}.
 
 Period: ${startDate} to ${endDate}
 Brand category: ${brand.category || 'unknown'}
 Brand voice: ${brand.voice || 'unknown'}
 
-What the AM wants:
-${prompt || '(no specific request — produce a Full Account Sweep)'}
+${
+  hasPrompt
+    ? `=== AM's SPECIFIC REQUEST (this drives the report) ===
+${prompt.trim()}
 
-The Klaviyo data has already been pulled and is included below as JSON. SKIP the Data Collection Playbook section of your skill — you do not have access to tools, the data is already here. Go straight to the analysis framework using this data.
+CRITICAL: The AM has asked for something SPECIFIC. Do NOT produce a Full Account Sweep with all 10 sections. Produce a TARGETED report that answers ONLY what they asked for.
 
-If a section of the JSON contains an "error" field, that data could not be pulled — note it in the report and work with what is available.
+- Ignore the default 10-section output template from your skill instructions.
+- Structure the report around the AM's request.
+- Use a # heading with the topic they asked about (e.g. "Pop-up form performance", "Abandoned cart flow deep dive", etc).
+- Include a table of real numbers from the JSON data below. No placeholders, no guesses.
+- Add a short "Insights" section (3-5 bullets) and a "Recommendations" section (3-5 bullets) tailored to what they asked for.
+- If the AM asks about something that is NOT in the JSON data below (e.g. detailed subject line text, total store revenue), say so explicitly.`
+    : `=== NO SPECIFIC REQUEST ===
+Produce a Full Account Sweep following your skill's default output format (all 10 sections).`
+}
 
-Return ONLY the markdown report inside <markdown>...</markdown> tags. Nothing outside the tags.
+=== HARD RULES ===
+1. The Klaviyo data is ALREADY pulled and is in the JSON below. You have NO tools. Work only with the data provided.
+2. Every number in the report must come from the JSON. Never fabricate figures.
+3. If a JSON section has an "error" field, that data could not be pulled — note it in the report.
+4. If the JSON data is empty for a topic (e.g. form_viewed_by_form is empty and the AM asked about pop-ups), say "No data for this period" instead of making up numbers.
+5. Format rates to 1 decimal place. Format revenue with currency symbol and commas (e.g. $12,340.50).
+6. Never use em dashes.
+7. Return ONLY the markdown inside <markdown>...</markdown> tags. Nothing outside.
 
+=== CONTEXTUAL DATA (JSON) ===
 \`\`\`json
 ${payloadJson}
 \`\`\`
