@@ -131,6 +131,8 @@ export default function ABTestsPage() {
   const [history, setHistory] = useState<HistoryBatch[] | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [reExportingBatchId, setReExportingBatchId] = useState<string | null>(null);
+  const [deleteConfirmBatchId, setDeleteConfirmBatchId] = useState<string | null>(null);
+  const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
 
   const allowed = role === 'account_manager' || role === 'klaviyo_tech';
 
@@ -384,6 +386,26 @@ export default function ABTestsPage() {
       setExporting(false);
     }
   }, [selectedBrand, filledRows, flowThemes, activeFlows, loadHistory]);
+
+  const deleteBatch = useCallback(
+    async (batchId: string) => {
+      if (!selectedBrand) return;
+      setDeletingBatchId(batchId);
+      try {
+        const res = await fetch(`/api/ab-tests?batchId=${batchId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Delete failed');
+        toast.success(`Deleted ${data.deleted} test${data.deleted === 1 ? '' : 's'}`);
+        setDeleteConfirmBatchId(null);
+        loadHistory(selectedBrand.id);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Delete failed');
+      } finally {
+        setDeletingBatchId(null);
+      }
+    },
+    [selectedBrand, loadHistory]
+  );
 
   const reExportBatch = useCallback(
     async (batch: HistoryBatch) => {
@@ -835,6 +857,8 @@ export default function ABTestsPage() {
                       month: 'short',
                       day: 'numeric',
                     });
+                    const confirming = deleteConfirmBatchId === batch.batch_id;
+                    const deleting = deletingBatchId === batch.batch_id;
                     return (
                       <div
                         key={batch.batch_id}
@@ -851,13 +875,42 @@ export default function ABTestsPage() {
                             <p className="text-[11px] text-[#888] mt-1 italic">{batch.hypothesis}</p>
                           )}
                         </div>
-                        <Button
-                          variant="secondary"
-                          onClick={() => reExportBatch(batch)}
-                          disabled={reExportingBatchId === batch.batch_id}
-                        >
-                          {reExportingBatchId === batch.batch_id ? 'Exporting…' : 'Export DOCX'}
-                        </Button>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {confirming ? (
+                            <>
+                              <Button
+                                variant="danger"
+                                onClick={() => deleteBatch(batch.batch_id)}
+                                disabled={deleting}
+                              >
+                                {deleting ? 'Deleting…' : 'Confirm delete'}
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                onClick={() => setDeleteConfirmBatchId(null)}
+                                disabled={deleting}
+                              >
+                                Cancel
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button
+                                variant="secondary"
+                                onClick={() => reExportBatch(batch)}
+                                disabled={reExportingBatchId === batch.batch_id}
+                              >
+                                {reExportingBatchId === batch.batch_id ? 'Exporting…' : 'Export DOCX'}
+                              </Button>
+                              <Button
+                                variant="danger"
+                                onClick={() => setDeleteConfirmBatchId(batch.batch_id)}
+                              >
+                                Delete
+                              </Button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     );
                   })}

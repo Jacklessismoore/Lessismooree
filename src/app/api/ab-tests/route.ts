@@ -63,6 +63,37 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// DELETE /api/ab-tests?batchId=... → deletes every row in the batch
+export async function DELETE(request: NextRequest) {
+  try {
+    const role = await getCurrentUserRole();
+    if (!roleAllowedForAbTests(role)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const batchId = searchParams.get('batchId');
+    if (!batchId) {
+      return NextResponse.json({ error: 'batchId required' }, { status: 400 });
+    }
+
+    const supabase = await createClient();
+    const { error, count } = await supabase
+      .from('ab_tests')
+      .delete({ count: 'exact' })
+      .eq('batch_id', batchId);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ deleted: count ?? 0 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
 // GET /api/ab-tests?brandId=... → returns batches grouped by batch_id with their tests.
 export async function GET(request: NextRequest) {
   try {
