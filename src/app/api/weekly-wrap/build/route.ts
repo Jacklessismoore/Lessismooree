@@ -76,7 +76,8 @@ export async function POST(request: NextRequest) {
 
     const apiKey = brand.klaviyo_api_key;
 
-    // Date range
+    // Date range — use Klaviyo's named timeframe keys for max compatibility
+    const timeframeKey = period === '7d' ? 'last_7_days' : 'last_30_days';
     const end = new Date();
     const start = new Date();
     start.setDate(start.getDate() - (period === '7d' ? 7 : 30));
@@ -108,14 +109,16 @@ export async function POST(request: NextRequest) {
     ];
     const reportValueStats = ['conversion_value', 'revenue_per_recipient', 'average_order_value'];
 
-    // Pull campaign and flow reports in parallel
+    // Pull campaign and flow reports in parallel.
+    // The campaign-values-report endpoint REQUIRES a send_channel filter.
     const [campaignReportRes, flowReportRes] = await Promise.all([
       safe(
         getCampaignReport(apiKey, {
           conversionMetricId: placedOrderId,
           statistics: reportStats,
           valueStatistics: reportValueStats,
-          timeframe: { start: startISO, end: endISO },
+          timeframe: { key: timeframeKey },
+          filter: 'equals(send_channel,"email")',
         }),
         'get_campaign_report'
       ),
@@ -124,11 +127,23 @@ export async function POST(request: NextRequest) {
           conversionMetricId: placedOrderId,
           statistics: reportStats,
           valueStatistics: reportValueStats,
-          timeframe: { start: startISO, end: endISO },
+          timeframe: { key: timeframeKey },
         }),
         'get_flow_report'
       ),
     ]);
+
+    // Surface any retrieval failures so the user can see them in the UI
+    const campaignErr = (campaignReportRes as { error?: string })?.error;
+    const flowErr = (flowReportRes as { error?: string })?.error;
+    if (campaignErr && flowErr) {
+      return NextResponse.json(
+        {
+          error: `Klaviyo data fetch failed. campaign: ${campaignErr}. flow: ${flowErr}`,
+        },
+        { status: 502 }
+      );
+    }
 
     const periodLabel = period === '7d' ? 'Last 7 days' : 'Last 30 days';
 
