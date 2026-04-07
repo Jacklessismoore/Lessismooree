@@ -293,20 +293,28 @@ export async function queryMetricAggregates(apiKey: string, body: {
   metric_id: string;
   measurements: string[];
   interval: string;
-  filter: string;
+  filter: string | string[];
   group_by?: string[];
 }) {
+  // Klaviyo's /metric-aggregates endpoint wants:
+  //   - filter as an array of filter strings (not a single string)
+  //   - `by` (array) as the grouping dimension, NOT `group_by`
+  //   - Omit `by` entirely when empty; the API rejects `by: []`
+  const filterArray = Array.isArray(body.filter) ? body.filter : [body.filter];
+  const attributes: Record<string, unknown> = {
+    metric_id: body.metric_id,
+    measurements: body.measurements,
+    interval: body.interval,
+    page_size: 500,
+    filter: filterArray,
+  };
+  if (body.group_by && body.group_by.length > 0) {
+    attributes.by = body.group_by;
+  }
   return klaviyoPost(apiKey, '/metric-aggregates', {
     data: {
       type: 'metric-aggregate',
-      attributes: {
-        metric_id: body.metric_id,
-        measurements: body.measurements,
-        interval: body.interval,
-        page_size: 500,
-        filter: body.filter,
-        group_by: body.group_by || [],
-      },
+      attributes,
     },
   });
 }
