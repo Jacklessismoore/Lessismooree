@@ -42,11 +42,20 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
-  // Allow API routes and static assets
+  // Allow API routes and static assets (icons must be public for iOS share
+  // sheets, link preview crawlers, og:image fetchers, etc.)
+  const path = request.nextUrl.pathname;
   if (
-    request.nextUrl.pathname.startsWith('/api/') ||
-    request.nextUrl.pathname.startsWith('/_next/') ||
-    request.nextUrl.pathname === '/favicon.ico'
+    path.startsWith('/api/') ||
+    path.startsWith('/_next/') ||
+    path === '/favicon.ico' ||
+    path === '/icon.svg' ||
+    path === '/icon.png' ||
+    path === '/apple-icon.png' ||
+    path === '/robots.txt' ||
+    path === '/sitemap.xml' ||
+    path === '/manifest.json' ||
+    path === '/manifest.webmanifest'
   ) {
     return supabaseResponse;
   }
@@ -62,5 +71,8 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: [
+    // Skip middleware for static assets, icons, and Next internals
+    '/((?!_next/static|_next/image|favicon.ico|icon.svg|icon.png|apple-icon.png|robots.txt|sitemap.xml|manifest.json).*)',
+  ],
 };
