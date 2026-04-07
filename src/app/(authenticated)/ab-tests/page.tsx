@@ -633,7 +633,7 @@ export default function ABTestsPage() {
                           onClick={() => suggestThemeForFlow(flow)}
                           disabled={suggesting || thisFlowBulk}
                         >
-                          {suggesting ? 'Thinking…' : '✨ Suggest with AI'}
+                          {suggesting ? 'Thinking…' : 'Suggest with AI'}
                         </Button>
                         <Button
                           onClick={() => generateAllForFlow(flow)}
@@ -641,7 +641,7 @@ export default function ABTestsPage() {
                         >
                           {thisFlowBulk
                             ? 'Generating…'
-                            : `✨ Generate variants (${flow.emails.length})`}
+                            : `Generate variants (${flow.emails.length})`}
                         </Button>
                       </div>
                     </Card>
@@ -694,7 +694,7 @@ export default function ABTestsPage() {
                                           },
                                         }))
                                       }
-                                      placeholder="(empty - click ✨ to generate)"
+                                      placeholder="(empty - click AI to generate)"
                                       className="w-full bg-[#0f0f0f] border border-white/[0.08] rounded-md px-2 py-1.5 text-[13px] mb-2"
                                     />
                                     <p className="text-[11px] text-[#555] uppercase tracking-wider">Preview</p>
@@ -728,7 +728,7 @@ export default function ABTestsPage() {
                                       onClick={() => generateVariantForEmail(flow, email)}
                                       disabled={v.generating || bulkGenerating}
                                     >
-                                      {v.generating ? '…' : v.variant_subject ? '✨ Redo' : '✨ AI'}
+                                      {v.generating ? '…' : v.variant_subject ? 'Redo' : 'AI'}
                                     </Button>
                                   </td>
                                 </tr>
@@ -756,7 +756,7 @@ export default function ABTestsPage() {
                                   onClick={() => generateVariantForEmail(flow, email)}
                                   disabled={v.generating || bulkGenerating}
                                 >
-                                  {v.generating ? '…' : v.variant_subject ? '✨ Redo' : '✨ AI'}
+                                  {v.generating ? '…' : v.variant_subject ? 'Redo' : 'AI'}
                                 </Button>
                               </div>
 

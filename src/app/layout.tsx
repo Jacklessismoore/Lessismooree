@@ -12,8 +12,36 @@ const poppins = Poppins({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://lessismoore.app'),
   title: 'LIM Email Workbench',
-  description: 'Less Is Moore — Email Marketing Agency Workbench',
+  description: 'Less Is Moore. Email Marketing Agency Workbench.',
+  applicationName: 'LIM Email Workbench',
+  appleWebApp: {
+    capable: true,
+    title: 'LIM',
+    statusBarStyle: 'black-translucent',
+  },
+  openGraph: {
+    type: 'website',
+    siteName: 'LIM Email Workbench',
+    title: 'LIM Email Workbench',
+    description: 'Less Is Moore. Email Marketing Agency Workbench.',
+    url: 'https://lessismoore.app',
+    images: [
+      {
+        url: '/apple-icon.png',
+        width: 180,
+        height: 180,
+        alt: 'LIM',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary',
+    title: 'LIM Email Workbench',
+    description: 'Less Is Moore. Email Marketing Agency Workbench.',
+    images: ['/apple-icon.png'],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

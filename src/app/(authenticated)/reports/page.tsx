@@ -398,7 +398,7 @@ export default function ReportsPage() {
 
           <div className="mt-4">
             <Button onClick={buildReport} disabled={building}>
-              {building ? 'Building report (this can take ~30 seconds)…' : '✨ Build report'}
+              {building ? 'Building report (this can take ~30 seconds)…' : 'Build report'}
             </Button>
           </div>
         </Card>

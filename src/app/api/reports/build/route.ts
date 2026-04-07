@@ -5,7 +5,6 @@ import {
   getAccountDetails,
   getMetrics,
   getFlows,
-  getLists,
   getSegments,
   getCampaignReport,
   getFlowReport,
@@ -29,13 +28,21 @@ function findMetricId(metrics: KlaviyoMetric[], name: string): string | null {
 }
 
 // Wraps a promise with a timeout. On timeout returns { error }
-async function safe<T>(promise: Promise<T>, label: string, ms = 25_000): Promise<T | { error: string }> {
+async function safe<T>(promise: Promise<T>, label: string, ms = 15_000): Promise<T | { error: string }> {
   return Promise.race([
     promise.catch((e) => ({ error: `${label}: ${e instanceof Error ? e.message : String(e)}` })),
     new Promise<{ error: string }>((resolve) =>
       setTimeout(() => resolve({ error: `${label}: timed out after ${ms}ms` }), ms)
     ),
   ]);
+}
+
+// Stringify + truncate a section so the prompt stays small. Klaviyo data can be huge.
+function stringifyTrimmed(value: unknown, maxLen = 6000): string {
+  if (value === undefined || value === null) return 'null';
+  const json = JSON.stringify(value);
+  if (json.length <= maxLen) return json;
+  return json.slice(0, maxLen) + '... (truncated)';
 }
 
 function extractBlock(text: string, tag: string): string | null {
@@ -107,19 +114,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ─── PHASE 2: parallel data fetch (everything that depends only on metric IDs) ───
+    // ─── PHASE 2: parallel data fetch — essentials only to fit the timeout ───
     const dateFilter = dateRangeFilter(startDate, endDate);
     const reportStats = [
       'open_rate',
       'click_rate',
       'click_to_open_rate',
       'bounce_rate',
-      'spam_complaint_rate',
       'unsubscribe_rate',
       'recipients',
       'delivered',
-      'opens_unique',
-      'clicks_unique',
       'conversion_rate',
       'conversions',
     ];
@@ -127,21 +131,13 @@ export async function POST(request: NextRequest) {
 
     const [
       flowsRes,
-      listsRes,
       segmentsRes,
       campaignReportRes,
       flowReportRes,
       revenueByFlowRes,
-      revenueByCampaignRes,
       revenueTotalRes,
-      bouncesDailyRes,
-      spamDailyRes,
-      receivedDailyRes,
-      opensDailyRes,
-      subscribesMonthlyRes,
     ] = await Promise.all([
       safe(getFlows(apiKey), 'get_flows'),
-      safe(getLists(apiKey), 'get_lists'),
       safe(getSegments(apiKey), 'get_segments'),
       safe(
         getCampaignReport(apiKey, {
@@ -164,7 +160,7 @@ export async function POST(request: NextRequest) {
       safe(
         queryMetricAggregates(apiKey, {
           metric_id: placedOrderId,
-          measurements: ['sum_value', 'count', 'unique'],
+          measurements: ['sum_value', 'count'],
           interval: 'month',
           filter: dateFilter,
           group_by: ['$attributed_flow'],
@@ -177,110 +173,31 @@ export async function POST(request: NextRequest) {
           measurements: ['sum_value', 'count', 'unique'],
           interval: 'month',
           filter: dateFilter,
-          group_by: ['Campaign Name'],
-        }),
-        'revenue_by_campaign'
-      ),
-      safe(
-        queryMetricAggregates(apiKey, {
-          metric_id: placedOrderId,
-          measurements: ['sum_value', 'count', 'unique'],
-          interval: 'month',
-          filter: dateFilter,
         }),
         'revenue_total'
       ),
-      bouncedId
-        ? safe(
-            queryMetricAggregates(apiKey, {
-              metric_id: bouncedId,
-              measurements: ['count'],
-              interval: 'day',
-              filter: dateFilter,
-            }),
-            'bounces_daily'
-          )
-        : Promise.resolve({ error: 'no bounced metric' }),
-      spamId
-        ? safe(
-            queryMetricAggregates(apiKey, {
-              metric_id: spamId,
-              measurements: ['count'],
-              interval: 'day',
-              filter: dateFilter,
-            }),
-            'spam_daily'
-          )
-        : Promise.resolve({ error: 'no spam metric' }),
-      receivedId
-        ? safe(
-            queryMetricAggregates(apiKey, {
-              metric_id: receivedId,
-              measurements: ['count'],
-              interval: 'day',
-              filter: dateFilter,
-            }),
-            'received_daily'
-          )
-        : Promise.resolve({ error: 'no received metric' }),
-      openedEmailId
-        ? safe(
-            queryMetricAggregates(apiKey, {
-              metric_id: openedEmailId,
-              measurements: ['count', 'unique'],
-              interval: 'day',
-              filter: dateFilter,
-            }),
-            'opens_daily'
-          )
-        : Promise.resolve({ error: 'no opened metric' }),
-      subscribedId
-        ? safe(
-            queryMetricAggregates(apiKey, {
-              metric_id: subscribedId,
-              measurements: ['count'],
-              interval: 'month',
-              filter: dateFilter,
-            }),
-            'subscribes_monthly'
-          )
-        : Promise.resolve({ error: 'no subscribed metric' }),
     ]);
+    // unused metric IDs swallowed to avoid lint warnings
+    void openedEmailId;
+    void bouncedId;
+    void spamId;
+    void receivedId;
+    void subscribedId;
 
     // ─── PHASE 3: bundle into a structured JSON payload for Claude ───
-    const payload = {
-      brand: {
-        name: brand.name,
-        category: brand.category || 'unknown',
-        voice: brand.voice || 'unknown',
-      },
-      period: { start: startDate, end: endDate },
-      account: accountRes,
-      flows: flowsRes,
-      lists: listsRes,
-      segments: segmentsRes,
-      reports: {
-        campaign_report_period: campaignReportRes,
-        flow_report_period: flowReportRes,
-      },
-      revenue: {
-        by_flow: revenueByFlowRes,
-        by_campaign: revenueByCampaignRes,
-        total: revenueTotalRes,
-      },
-      deliverability: {
-        bounces_daily: bouncesDailyRes,
-        spam_daily: spamDailyRes,
-        received_daily: receivedDailyRes,
-        opens_daily: opensDailyRes,
-      },
-      list_growth: {
-        subscribes_monthly: subscribesMonthlyRes,
-      },
-    };
-
-    // Trim each section so the prompt stays under token limits
-    const payloadJson = JSON.stringify(payload).slice(0, 120_000);
+    // Each section is trimmed individually so we keep useful data from every
+    // section instead of one giant blob that gets cut off mid-section.
+    const payloadJson = `{
+  "brand": ${JSON.stringify({ name: brand.name, category: brand.category || 'unknown', voice: brand.voice || 'unknown' })},
+  "period": ${JSON.stringify({ start: startDate, end: endDate })},
+  "account": ${stringifyTrimmed(accountRes, 1500)},
+  "flows": ${stringifyTrimmed(flowsRes, 8000)},
+  "segments": ${stringifyTrimmed(segmentsRes, 5000)},
+  "campaign_report": ${stringifyTrimmed(campaignReportRes, 12000)},
+  "flow_report": ${stringifyTrimmed(flowReportRes, 12000)},
+  "revenue_by_flow": ${stringifyTrimmed(revenueByFlowRes, 4000)},
+  "revenue_total": ${stringifyTrimmed(revenueTotalRes, 2000)}
+}`;
 
     // ─── PHASE 4: ONE Claude call to analyse + format ───
     const userPrompt = `Build a performance report for ${brand.name}.
@@ -303,9 +220,12 @@ ${payloadJson}
 \`\`\`
 `;
 
+    // Use Haiku 4.5 for the analysis call. Much faster than Sonnet and the
+    // analysis work fits comfortably in its capabilities given the structured
+    // payload we hand it.
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 8000,
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 6000,
       system: KLAVIYO_ACCOUNT_ANALYSER_SKILL,
       messages: [{ role: 'user', content: userPrompt }],
     });
