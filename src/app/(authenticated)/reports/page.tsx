@@ -1,22 +1,24 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useCallback } from 'react';
 import { useApp } from '@/lib/app-context';
 import { Brand } from '@/lib/types';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { BrandCard } from '@/components/ui/brand-card';
-import { createClient } from '@/lib/supabase/client';
+import { exportReportDocx } from '@/lib/export-report-docx';
 import toast from 'react-hot-toast';
 
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
+// Default to last 30 days
+function defaultStart() {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return d.toISOString().slice(0, 10);
 }
-
-// ─── Brand Selection (same pattern as Create page) ───
+function defaultEnd() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 function ClientSelectionByManager({
   brands,
@@ -43,7 +45,7 @@ function ClientSelectionByManager({
 
   return (
     <div className="space-y-8">
-      {groups.map(group => (
+      {groups.map((group) => (
         <div key={group.managerName}>
           <div className="flex items-center gap-3 mb-3">
             <h3 className="text-[11px] font-bold text-white uppercase tracking-[0.15em]">
@@ -54,19 +56,19 @@ function ClientSelectionByManager({
               {group.brands.length} client{group.brands.length !== 1 ? 's' : ''}
             </span>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-            {group.brands.map(brand => {
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+            {group.brands.map((brand) => {
               const idx = animIndex++;
               const hasKey = !!brand.klaviyo_api_key;
               return (
                 <BrandCard
                   key={brand.id}
                   brand={brand}
-                  onClick={() => onSelect(brand)}
+                  onClick={hasKey ? () => onSelect(brand) : undefined}
                   showEdit={false}
                   showMenu={false}
                   animDelay={idx * 30}
-                  subtitle={hasKey ? brand.category || brand.location || '' : 'No Klaviyo key'}
+                  subtitle={hasKey ? brand.category || 'Uncategorised' : 'No Klaviyo key'}
                 />
               );
             })}
@@ -77,398 +79,170 @@ function ClientSelectionByManager({
   );
 }
 
-// ─── Chat Message Component ───
-
-function ChatMessage({ message }: { message: Message }) {
-  const isUser = message.role === 'user';
-
-  return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} animate-fade-in`}>
-      <div
-        className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-          isUser
-            ? 'bg-white text-black rounded-br-md'
-            : 'glass-card rounded-bl-md'
-        }`}
-        style={!isUser ? { background: '#141414', borderColor: 'rgba(255,255,255,0.06)' } : undefined}
-      >
-        <div
-          className={`text-[13px] leading-relaxed whitespace-pre-wrap ${
-            isUser ? 'text-black' : 'text-[#ccc]'
-          }`}
-          dangerouslySetInnerHTML={{
-            __html: isUser
-              ? escapeHtml(message.content)
-              : formatAssistantMessage(message.content),
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function formatAssistantMessage(text: string): string {
-  // Convert markdown-style tables to HTML
-  let formatted = text;
-
-  // Bold
-  formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>');
-
-  // Headers
-  formatted = formatted.replace(/^### (.+)$/gm, '<div class="text-[11px] text-white font-bold uppercase tracking-wider mt-4 mb-2">$1</div>');
-  formatted = formatted.replace(/^## (.+)$/gm, '<div class="text-xs text-white font-bold uppercase tracking-wider mt-4 mb-2">$1</div>');
-
-  // Simple table detection: lines with | separators
-  const lines = formatted.split('\n');
-  let inTable = false;
-  const processedLines: string[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-
-    if (line.startsWith('|') && line.endsWith('|')) {
-      // Check if it's a separator row (|---|---|)
-      if (line.match(/^\|[\s-:|]+\|$/)) {
-        continue; // Skip separator rows
-      }
-
-      if (!inTable) {
-        processedLines.push('<table class="w-full text-[11px] my-3 border-collapse">');
-        inTable = true;
-      }
-
-      const cells = line.split('|').filter(c => c.trim() !== '');
-      const isHeader = i === 0 || (i > 0 && lines[i + 1]?.trim().match(/^\|[\s-:|]+\|$/));
-
-      const tag = isHeader ? 'th' : 'td';
-      const cellClass = isHeader
-        ? 'px-3 py-2 text-left text-[10px] text-[#888] uppercase tracking-wider font-semibold border-b border-white/[0.06] bg-white/[0.02]'
-        : 'px-3 py-2 text-left text-[#ccc] border-b border-white/[0.03]';
-
-      processedLines.push(
-        `<tr>${cells.map(c => `<${tag} class="${cellClass}">${c.trim()}</${tag}>`).join('')}</tr>`
-      );
-    } else {
-      if (inTable) {
-        processedLines.push('</table>');
-        inTable = false;
-      }
-      processedLines.push(line);
-    }
-  }
-  if (inTable) processedLines.push('</table>');
-
-  return processedLines.join('\n');
-}
-
-// ─── Typing Indicator ───
-
-function TypingIndicator() {
-  return (
-    <div className="flex justify-start animate-fade-in">
-      <div className="glass-card rounded-2xl rounded-bl-md px-4 py-3" style={{ background: '#141414' }}>
-        <div className="flex items-center gap-1.5">
-          <div className="w-1.5 h-1.5 bg-[#555] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-          <div className="w-1.5 h-1.5 bg-[#555] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-          <div className="w-1.5 h-1.5 bg-[#555] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Main Page ───
-
 export default function ReportsPage() {
-  const router = useRouter();
-  const { podBrands, selectedPod } = useApp();
+  const { podBrands } = useApp();
+
   const [selectedBrand, setSelectedBrand] = useState<Brand | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [chatId, setChatId] = useState<string | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [startDate, setStartDate] = useState(defaultStart());
+  const [endDate, setEndDate] = useState(defaultEnd());
+  const [prompt, setPrompt] = useState('');
+  const [building, setBuilding] = useState(false);
+  const [reportMd, setReportMd] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
-
-  // Focus input when brand is selected
-  useEffect(() => {
-    if (selectedBrand) {
-      setTimeout(() => inputRef.current?.focus(), 300);
-    }
-  }, [selectedBrand]);
-
-  // Save messages to DB whenever they change
-  const saveMessages = useCallback(async (msgs: Message[], cId: string | null, brandId: string) => {
-    const supabase = createClient();
-    if (!supabase || msgs.length === 0) return;
-
-    if (cId) {
-      await supabase
-        .from('report_chats')
-        .update({ messages: msgs, updated_at: new Date().toISOString() })
-        .eq('id', cId);
-    } else {
-      const { data } = await supabase
-        .from('report_chats')
-        .insert({ brand_id: brandId, messages: msgs })
-        .select('id')
-        .single();
-      if (data) setChatId(data.id);
-    }
-  }, []);
-
-  // Load existing chat when brand is selected
-  const loadChat = useCallback(async (brandId: string) => {
-    const supabase = createClient();
-    if (!supabase) return;
-
-    const { data } = await supabase
-      .from('report_chats')
-      .select('id, messages')
-      .eq('brand_id', brandId)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (data && Array.isArray(data.messages) && data.messages.length > 0) {
-      setChatId(data.id);
-      setMessages(data.messages as Message[]);
-    } else {
-      setChatId(null);
-    }
-  }, []);
-
-  const handleSelectBrand = async (brand: Brand) => {
+  const handleSelectBrand = (brand: Brand) => {
     if (!brand.klaviyo_api_key) {
-      toast.error('No Klaviyo API key set for this client. Add one in Manage Clients.');
+      toast.error('This client has no Klaviyo API key configured');
       return;
     }
     setSelectedBrand(brand);
-
-    // Try to load existing chat
-    await loadChat(brand.id);
-
-    // If no existing chat, set welcome message
-    setMessages(prev => {
-      if (prev.length > 0) return prev;
-      return [
-        {
-          role: 'assistant',
-          content: `What would you like to know about **${brand.name}**'s Klaviyo performance?\n\nI can pull campaign results, flow analytics, subscriber data, and more. Try asking:\n- "Show me campaign performance from the last 7 days"\n- "What flows are currently live?"\n- "How many subscribers do we have?"\n- "What was our open rate this month?"`,
-        },
-      ];
-    });
+    setReportMd(null);
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please upload an image file');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setImagePreview(reader.result as string);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const clearImage = () => {
-    setImagePreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const handleSend = async () => {
-    if ((!input.trim() && !imagePreview) || !selectedBrand || loading) return;
-
-    const userMessage = input.trim();
-    const userImage = imagePreview;
-    setInput('');
-    clearImage();
-
-    // Build display message (with image indicator)
-    const displayContent = userImage
-      ? `${userMessage}\n\n[Attached screenshot]`
-      : userMessage;
-
-    const newMessages: Message[] = [...messages, { role: 'user', content: displayContent }];
-    setMessages(newMessages);
-    setLoading(true);
-
+  const buildReport = useCallback(async () => {
+    if (!selectedBrand) return;
+    setBuilding(true);
+    setReportMd(null);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 120000); // 2 min timeout
-
-      const res = await fetch('/api/klaviyo-chat', {
+      const res = await fetch('/api/reports/build', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          messages: [...messages, { role: 'user', content: userMessage }],
-          klaviyoApiKey: selectedBrand.klaviyo_api_key,
-          brandName: selectedBrand.name,
-          image: userImage || undefined,
+          brandId: selectedBrand.id,
+          prompt: prompt.trim(),
+          startDate,
+          endDate,
         }),
       });
-
-      clearTimeout(timeout);
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Request failed');
-      }
-
       const data = await res.json();
-      const updatedMessages: Message[] = [...newMessages, { role: 'assistant', content: data.response }];
-      setMessages(updatedMessages);
-
-      // Save to DB
-      await saveMessages(updatedMessages, chatId, selectedBrand.id);
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Something went wrong';
-      const updatedMessages: Message[] = [
-        ...newMessages,
-        { role: 'assistant', content: `Something went wrong: ${errorMsg}\n\nPlease try again or rephrase your question.` },
-      ];
-      setMessages(updatedMessages);
-      toast.error('Failed to get response');
+      if (!res.ok) throw new Error(data.error || 'Failed');
+      setReportMd(data.markdown);
+      toast.success('Report ready');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to build report');
+    } finally {
+      setBuilding(false);
     }
+  }, [selectedBrand, prompt, startDate, endDate]);
 
-    setLoading(false);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+  const downloadDocx = useCallback(async () => {
+    if (!selectedBrand || !reportMd) return;
+    setExporting(true);
+    try {
+      await exportReportDocx({
+        brandName: selectedBrand.name,
+        createdAt: new Date().toISOString(),
+        startDate,
+        endDate,
+        markdown: reportMd,
+      });
+      toast.success('Downloaded DOCX');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to export');
+    } finally {
+      setExporting(false);
     }
-  };
+  }, [selectedBrand, reportMd, startDate, endDate]);
 
-  // ─── Brand Selection ───
   if (!selectedBrand) {
     return (
       <div>
-        <PageHeader
-          title="Reports"
-          subtitle={selectedPod ? `${selectedPod.name} — Select a client` : 'Select a pod first'}
-        />
-        {podBrands.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="w-12 h-12 rounded-full border border-white/[0.06] flex items-center justify-center mx-auto mb-5">
-              <span className="text-[#555] text-lg">◆</span>
-            </div>
-            <p className="text-[#444] text-sm mb-4">No clients in this pod yet.</p>
-            <Button variant="secondary" onClick={() => router.push('/clients/new')}>Add Client</Button>
-          </div>
-        ) : (
-          <ClientSelectionByManager brands={podBrands} onSelect={handleSelectBrand} />
-        )}
+        <PageHeader title="Reports" subtitle="Pick a client to build a report" />
+        <div className="mt-8">
+          {podBrands.length === 0 ? (
+            <p className="text-sm text-[#666]">No clients in this pod yet.</p>
+          ) : (
+            <ClientSelectionByManager brands={podBrands} onSelect={handleSelectBrand} />
+          )}
+        </div>
       </div>
     );
   }
 
-  // ─── Chat Interface ───
   return (
-    <div className="flex flex-col h-[calc(100dvh-5rem)] max-w-3xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4 flex-shrink-0">
-        <div>
-          <h1 className="heading text-xl text-white">Klaviyo Reports</h1>
-          <p className="text-[11px] text-[#555] mt-1">{selectedBrand.name}</p>
-        </div>
-        <div className="flex items-center gap-2">
+    <div>
+      <PageHeader title="Reports" subtitle="Build a Klaviyo performance report and export to DOCX" />
+
+      <div className="mt-8 space-y-6">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <p className="label-text">Client</p>
+            <h2 className="text-2xl font-bold">{selectedBrand.name}</h2>
+            <p className="text-xs text-[#666] mt-1">{selectedBrand.category || 'Uncategorised'}</p>
+          </div>
           <Button
             variant="secondary"
-            size="sm"
             onClick={() => {
               setSelectedBrand(null);
-              setMessages([]);
-              setInput('');
-              setChatId(null);
+              setReportMd(null);
             }}
           >
-            ← Change Client
+            Change client
           </Button>
         </div>
-      </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto space-y-4 pb-4 pr-1">
-        {messages.map((msg, i) => (
-          <ChatMessage key={i} message={msg} />
-        ))}
-        {loading && <TypingIndicator />}
-        <div ref={messagesEndRef} />
-      </div>
+        <Card className="p-6">
+          <h3 className="text-sm font-bold uppercase tracking-wider mb-4">Report inputs</h3>
 
-      {/* Input */}
-      <div className="flex-shrink-0 pt-3 border-t border-white/[0.04]">
-        {/* Image preview */}
-        {imagePreview && (
-          <div className="mb-2 relative inline-block">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={imagePreview} alt="Upload preview" className="h-20 rounded-lg border border-white/[0.06]" />
-            <button
-              onClick={clearImage}
-              className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] flex items-center justify-center hover:bg-red-400 transition-colors"
-            >
-              ×
-            </button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="label-text mb-2 block">Start date</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full bg-[#0f0f0f] border border-white/[0.08] rounded-md px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="label-text mb-2 block">End date</label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full bg-[#0f0f0f] border border-white/[0.08] rounded-md px-3 py-2 text-sm"
+              />
+            </div>
           </div>
+
+          <label className="label-text mb-2 block">What do you want in this report?</label>
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            rows={4}
+            placeholder="e.g. flow performance for last 30 days, top 5 campaigns by revenue, open + click + revenue summary"
+            className="w-full bg-[#0f0f0f] border border-white/[0.08] rounded-md px-3 py-2 text-sm"
+          />
+          <p className="text-[11px] text-[#555] mt-1">
+            Leave blank to get a full default report (campaigns, flows, opens, clicks, revenue).
+          </p>
+
+          <div className="mt-4">
+            <Button onClick={buildReport} disabled={building}>
+              {building ? 'Building report (this can take ~30 seconds)…' : '✨ Build report'}
+            </Button>
+          </div>
+        </Card>
+
+        {reportMd && (
+          <Card className="p-6 space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h3 className="text-sm font-bold uppercase tracking-wider">Generated report</h3>
+              <Button onClick={downloadDocx} disabled={exporting}>
+                {exporting ? 'Exporting…' : 'Export to DOCX'}
+              </Button>
+            </div>
+            <textarea
+              value={reportMd}
+              onChange={(e) => setReportMd(e.target.value)}
+              rows={28}
+              className="w-full bg-[#0a0a0a] border border-white/[0.06] rounded-md p-4 text-[12px] text-[#ccc] font-mono"
+            />
+            <p className="text-[11px] text-[#555]">
+              You can edit the markdown before exporting. Tables, headings, and bullets are preserved in the DOCX.
+            </p>
+          </Card>
         )}
-        <div className="flex items-center gap-2">
-          {/* Image upload button */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleImageUpload}
-            className="hidden"
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex-shrink-0 w-10 h-10 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center text-[#555] hover:text-white hover:border-white/15 transition-colors"
-            title="Upload screenshot"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M14 10V12.667C14 13.403 13.403 14 12.667 14H3.333C2.597 14 2 13.403 2 12.667V10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M11.333 5.333L8 2L4.667 5.333" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M8 2V10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask about Klaviyo performance..."
-            className="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-sm text-white placeholder-[#333] focus:outline-none focus:border-white/15 transition-colors"
-            disabled={loading}
-          />
-          <Button
-            onClick={handleSend}
-            disabled={(!input.trim() && !imagePreview) || loading}
-            size="md"
-            className="rounded-xl px-5"
-          >
-            Send
-          </Button>
-        </div>
       </div>
     </div>
   );

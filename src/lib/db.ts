@@ -1,5 +1,5 @@
 import { createClient } from './supabase/client';
-import { Pod, Manager, Designer, KlaviyoTech, Brand, Strategy, CalendarItem, BriefHistory, BrandProduct, EmailStatus, InboxItem, SOPCompletion, EmailReference } from './types';
+import { Pod, Manager, Designer, KlaviyoTech, Scheduler, Brand, Strategy, CalendarItem, BriefHistory, BrandProduct, EmailStatus, InboxItem, SOPCompletion, EmailReference } from './types';
 
 function supabase() {
   const client = createClient();
@@ -103,6 +103,31 @@ export async function createKlaviyoTech(name: string): Promise<KlaviyoTech> {
 
 export async function deleteKlaviyoTech(id: string): Promise<void> {
   const { error } = await supabase().from('klaviyo_techs').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// Schedulers
+export async function getSchedulers(): Promise<Scheduler[]> {
+  try {
+    const { data, error } = await supabase().from('schedulers').select('*').order('name');
+    if (error) {
+      if (error.code === 'PGRST205' || error.code === '42P01') return [];
+      throw error;
+    }
+    return data ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function createScheduler(name: string): Promise<Scheduler> {
+  const { data, error } = await supabase().from('schedulers').insert({ name }).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteScheduler(id: string): Promise<void> {
+  const { error } = await supabase().from('schedulers').delete().eq('id', id);
   if (error) throw error;
 }
 

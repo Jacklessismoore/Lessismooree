@@ -1,8 +1,8 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
-import { Pod, Manager, Designer, KlaviyoTech, Brand } from './types';
-import { getPods, getBrands, getManagers, getDesigners, getKlaviyoTechs } from './db';
+import { Pod, Manager, Designer, KlaviyoTech, Scheduler, Brand } from './types';
+import { getPods, getBrands, getManagers, getDesigners, getKlaviyoTechs, getSchedulers } from './db';
 import { useAuth } from './auth-context';
 
 interface AppContextType {
@@ -10,6 +10,7 @@ interface AppContextType {
   managers: Manager[];
   designers: Designer[];
   klaviyoTechs: KlaviyoTech[];
+  schedulers: Scheduler[];
   brands: Brand[];
   selectedPod: Pod | null;
   selectedClient: Brand | null;
@@ -19,6 +20,7 @@ interface AppContextType {
   refreshManagers: () => Promise<void>;
   refreshDesigners: () => Promise<void>;
   refreshKlaviyoTechs: () => Promise<void>;
+  refreshSchedulers: () => Promise<void>;
   refreshBrands: () => Promise<void>;
   podBrands: Brand[];
 }
@@ -31,6 +33,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [managers, setManagers] = useState<Manager[]>([]);
   const [designers, setDesigners] = useState<Designer[]>([]);
   const [klaviyoTechs, setKlaviyoTechs] = useState<KlaviyoTech[]>([]);
+  const [schedulers, setSchedulers] = useState<Scheduler[]>([]);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedPod, setSelectedPodState] = useState<Pod | null>(null);
   const [selectedClient, setSelectedClientState] = useState<Brand | null>(null);
@@ -71,6 +74,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const refreshSchedulers = useCallback(async () => {
+    try {
+      const data = await getSchedulers();
+      setSchedulers(data);
+    } catch (e) {
+      console.error('Failed to fetch schedulers:', e);
+    }
+  }, []);
+
   const refreshBrands = useCallback(async () => {
     try {
       const data = await getBrands();
@@ -87,9 +99,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refreshManagers();
       refreshDesigners();
       refreshKlaviyoTechs();
+      refreshSchedulers();
       refreshBrands();
     }
-  }, [user, refreshPods, refreshManagers, refreshDesigners, refreshKlaviyoTechs, refreshBrands]);
+  }, [user, refreshPods, refreshManagers, refreshDesigners, refreshKlaviyoTechs, refreshSchedulers, refreshBrands]);
 
   // Restore selected pod/client from localStorage
   useEffect(() => {
@@ -130,9 +143,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   return (
     <AppContext.Provider value={{
-      pods, managers, designers, klaviyoTechs, brands, selectedPod, selectedClient,
+      pods, managers, designers, klaviyoTechs, schedulers, brands, selectedPod, selectedClient,
       setSelectedPod, setSelectedClient,
-      refreshPods, refreshManagers, refreshDesigners, refreshKlaviyoTechs, refreshBrands,
+      refreshPods, refreshManagers, refreshDesigners, refreshKlaviyoTechs, refreshSchedulers, refreshBrands,
       podBrands,
     }}>
       {children}

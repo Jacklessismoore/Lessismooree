@@ -113,6 +113,12 @@ export interface KlaviyoTech {
   created_at: string;
 }
 
+export interface Scheduler {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
 export interface EmailReference {
   id: string;
   title: string;
