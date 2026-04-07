@@ -98,22 +98,13 @@ export async function POST(request: NextRequest) {
     const reportStats = [
       'recipients',
       'delivered',
-      'opens',
-      'opens_unique',
-      'clicks',
-      'clicks_unique',
-      'conversion_uniques',
-      'conversions',
-      'bounced',
-      'unsubscribes',
-      'spam_complaints',
       'open_rate',
       'click_rate',
       'click_to_open_rate',
       'conversion_rate',
-      'unsubscribe_rate',
+      'conversions',
       'bounce_rate',
-      'spam_complaint_rate',
+      'unsubscribe_rate',
     ];
     const reportValueStats = ['conversion_value', 'revenue_per_recipient', 'average_order_value'];
 
