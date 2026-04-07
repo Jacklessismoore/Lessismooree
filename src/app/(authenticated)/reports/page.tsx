@@ -268,7 +268,6 @@ export default function ReportsPage() {
     if (!selectedBrand) return;
     setBuilding(true);
     setReportMd(null);
-    const loadingToast = toast.loading('Building report. This can take 30-50 seconds…');
     try {
       const res = await fetch('/api/reports/build', {
         method: 'POST',
@@ -296,9 +295,9 @@ export default function ReportsPage() {
       }
       if (!data.markdown) throw new Error('AI returned no markdown');
       setReportMd(data.markdown);
-      toast.success('Report ready', { id: loadingToast });
+      toast.success('Report ready');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to build report', { id: loadingToast });
+      toast.error(err instanceof Error ? err.message : 'Failed to build report');
     } finally {
       setBuilding(false);
     }
@@ -398,8 +397,11 @@ export default function ReportsPage() {
 
           <div className="mt-4">
             <Button onClick={buildReport} disabled={building}>
-              {building ? 'Building report (this can take ~30 seconds)…' : 'Build report'}
+              {building ? 'Building report…' : 'Build report'}
             </Button>
+            {building && (
+              <p className="text-[12px] text-[#666] mt-3">This may take a moment.</p>
+            )}
           </div>
         </Card>
 
