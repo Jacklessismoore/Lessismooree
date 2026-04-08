@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { getMetrics, getFlowReport, getFlows } from '@/lib/klaviyo';
+import { getMetrics, getFlowReport } from '@/lib/klaviyo';
 
 export const maxDuration = 60;
 
@@ -16,11 +16,6 @@ const PERIOD_CONFIG: Record<Exclude<Period, 'custom'>, { key: string; label: str
 interface KlaviyoMetric {
   id: string;
   attributes?: { name?: string };
-}
-
-interface KlaviyoFlow {
-  id: string;
-  attributes?: { name?: string; status?: string; archived?: boolean; trigger_type?: string };
 }
 
 interface ReportRow {
@@ -95,46 +90,47 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Placed Order metric not found' }, { status: 500 });
     }
 
-    // Pull flow report grouped by variation so we can see which flows have A/B tests
-    const [reportRes, flowsRes] = await Promise.all([
-      getFlowReport(apiKey, {
-        conversionMetricId: placedOrderId,
-        statistics: ['recipients', 'delivered', 'open_rate', 'click_rate', 'conversion_rate', 'conversions', 'conversion_value'],
-        timeframe,
-        groupBy: ['send_channel', 'flow_id', 'flow_message_id', 'variation'],
-      }),
-      getFlows(apiKey),
-    ]);
+    // Pull flow report with native name groupings so we get real names directly.
+    const reportRes = await getFlowReport(apiKey, {
+      conversionMetricId: placedOrderId,
+      statistics: ['recipients', 'delivered', 'open_rate', 'click_rate', 'conversion_rate', 'conversions', 'conversion_value'],
+      timeframe,
+      groupBy: [
+        'send_channel',
+        'flow_id',
+        'flow_name',
+        'flow_message_id',
+        'variation',
+        'variation_name',
+      ],
+    });
 
     const rows = extractReportRows(reportRes);
 
     // Group rows by (flow_id + flow_message_id). Any group with > 1 distinct
-    // variation is an A/B test.
-    const groups: Record<string, { flow_id: string; flow_message_id: string; variations: Set<string>; recipients: number }> = {};
+    // variation is an A/B test. Capture the flow_name from the row.
+    const groups: Record<
+      string,
+      { flow_id: string; flow_name: string; flow_message_id: string; variations: Set<string>; recipients: number }
+    > = {};
     for (const row of rows) {
       const g = row.groupings || {};
       const fId = g.flow_id;
       const mId = g.flow_message_id;
-      const variation = g.variation;
+      const variation = g.variation_name || g.variation;
       if (!fId || !mId || !variation) continue;
       const key = `${fId}:${mId}`;
       if (!groups[key]) {
-        groups[key] = { flow_id: fId, flow_message_id: mId, variations: new Set(), recipients: 0 };
+        groups[key] = {
+          flow_id: fId,
+          flow_name: g.flow_name || `(flow ${fId.slice(0, 8)})`,
+          flow_message_id: mId,
+          variations: new Set(),
+          recipients: 0,
+        };
       }
       groups[key].variations.add(variation);
       groups[key].recipients += Number(row.statistics?.recipients || 0);
-    }
-
-    // Build flow name lookup
-    const flowData = (flowsRes as { data?: KlaviyoFlow[] })?.data || [];
-    const flowLookup: Record<string, { name: string; trigger: string; status: string }> = {};
-    for (const f of flowData) {
-      if (!f?.id) continue;
-      flowLookup[f.id] = {
-        name: f.attributes?.name || '(untitled flow)',
-        trigger: f.attributes?.trigger_type || 'unknown',
-        status: f.attributes?.status || 'unknown',
-      };
     }
 
     // Aggregate to one entry per flow (rolling up multiple tested messages)
@@ -144,13 +140,12 @@ export async function POST(request: NextRequest) {
     > = {};
     for (const g of Object.values(groups)) {
       if (g.variations.size < 2) continue; // not an A/B test
-      const meta = flowLookup[g.flow_id];
       if (!byFlow[g.flow_id]) {
         byFlow[g.flow_id] = {
           flow_id: g.flow_id,
-          flow_name: meta?.name || `(unknown flow ${g.flow_id.slice(0, 8)})`,
-          trigger: meta?.trigger || 'unknown',
-          status: meta?.status || 'unknown',
+          flow_name: g.flow_name,
+          trigger: 'unknown',
+          status: 'unknown',
           test_count: 0,
           variation_count: 0,
           recipients: 0,

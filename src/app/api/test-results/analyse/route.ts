@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase/server';
-import { getMetrics, getFlowReport, getFlows } from '@/lib/klaviyo';
+import { getMetrics, getFlowReport } from '@/lib/klaviyo';
 import { TEST_RESULTS_ANALYST_SKILL } from '@/lib/skills/test-results-analyst';
 
 export const maxDuration = 60;
@@ -18,11 +18,6 @@ const PERIOD_CONFIG: Record<Exclude<Period, 'custom'>, { key: string; label: str
 };
 
 interface KlaviyoMetric {
-  id: string;
-  attributes?: { name?: string };
-}
-
-interface KlaviyoFlow {
   id: string;
   attributes?: { name?: string };
 }
@@ -54,9 +49,12 @@ function round(v: number, d = 2): number {
 function extractBlock(text: string, tag: string): string | null {
   const match = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
   if (match) return match[1].trim();
-  // Fallback: if the model didn't use tags, accept the raw text as long as it
-  // looks like a markdown report (has a heading or enough content).
-  const cleaned = text.trim();
+  // Fallback: strip any stray opening/closing tags and return the body if it
+  // looks like a markdown report.
+  const cleaned = text
+    .replace(new RegExp(`<${tag}>`, 'g'), '')
+    .replace(new RegExp(`</${tag}>`, 'g'), '')
+    .trim();
   if (cleaned.length > 200 && /^#/m.test(cleaned)) return cleaned;
   return null;
 }
@@ -146,33 +144,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Placed Order metric not found' }, { status: 500 });
     }
 
-    // Pull the variation-grouped report + flow names
-    const [reportRes, flowsRes] = await Promise.all([
-      getFlowReport(apiKey, {
-        conversionMetricId: placedOrderId,
-        statistics: [
-          'recipients',
-          'delivered',
-          'open_rate',
-          'click_rate',
-          'conversion_rate',
-          'conversions',
-          'conversion_value',
-          'revenue_per_recipient',
-        ],
-        timeframe,
-        groupBy: ['send_channel', 'flow_id', 'flow_message_id', 'variation'],
-      }),
-      getFlows(apiKey),
-    ]);
+    // Pull the variation-grouped report with native flow_name + flow_message_name
+    // groupings so we get real names directly without a separate lookup.
+    const reportRes = await getFlowReport(apiKey, {
+      conversionMetricId: placedOrderId,
+      statistics: [
+        'recipients',
+        'delivered',
+        'open_rate',
+        'click_rate',
+        'conversion_rate',
+        'conversions',
+        'conversion_value',
+        'revenue_per_recipient',
+      ],
+      timeframe,
+      groupBy: [
+        'send_channel',
+        'flow_id',
+        'flow_name',
+        'flow_message_id',
+        'flow_message_name',
+        'variation',
+        'variation_name',
+      ],
+    });
 
     const rows = extractReportRows(reportRes);
-    const flowData = (flowsRes as { data?: KlaviyoFlow[] })?.data || [];
-    const flowNameById: Record<string, string> = {};
-    for (const f of flowData) {
-      if (f?.id) flowNameById[f.id] = f.attributes?.name || '(untitled flow)';
-    }
-
     const selectedFlowIdSet = new Set(flowIds);
 
     // Build test data: one entry per (flow_id, flow_message_id) with multiple variations.
@@ -182,16 +180,16 @@ export async function POST(request: NextRequest) {
       if (!selectedFlowIdSet.has(g.flow_id)) continue;
       const fId = g.flow_id;
       const mId = g.flow_message_id;
-      const variation = g.variation;
+      const variation = g.variation_name || g.variation;
       if (!fId || !mId || !variation) continue;
 
       const key = `${fId}:${mId}`;
       if (!testMap[key]) {
         testMap[key] = {
           flow_id: fId,
-          flow_name: flowNameById[fId] || `(unknown flow ${fId.slice(0, 8)})`,
+          flow_name: g.flow_name || `(flow ${fId.slice(0, 8)})`,
           flow_message_id: mId,
-          flow_message_label: `Message ${mId.slice(0, 8)}`,
+          flow_message_label: g.flow_message_name || `Message ${mId.slice(0, 8)}`,
           variations: [],
           server_suggested_winner: null,
         };
