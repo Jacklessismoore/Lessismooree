@@ -120,10 +120,18 @@ export async function getFlowReport(apiKey: string, input: ReportInput) {
   return klaviyoPost(apiKey, '/flow-values-reports', body);
 }
 
-export async function getCampaigns(apiKey: string, filter?: string) {
+export async function getCampaigns(
+  apiKey: string,
+  filter?: string,
+  options?: { includeMessages?: boolean }
+) {
   const params: Record<string, string> = {
-    'fields[campaign]': 'name,status,send_time,archived',
+    'fields[campaign]': 'name,status,send_time,scheduled_at,archived',
   };
+  if (options?.includeMessages) {
+    params['include'] = 'campaign-messages';
+    params['fields[campaign-message]'] = 'definition,send_times';
+  }
   if (filter) params['filter'] = filter;
   return klaviyoGet(apiKey, '/campaigns', params);
 }

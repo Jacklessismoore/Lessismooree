@@ -33,9 +33,23 @@ interface KlaviyoCampaign {
   attributes?: {
     name?: string;
     status?: string;
+    // Klaviyo's revision returns camelCase; older revisions returned snake_case.
+    // Read both defensively.
     send_time?: string | null;
+    sendTime?: string | null;
+    scheduled_at?: string | null;
+    scheduledAt?: string | null;
     archived?: boolean;
   };
+  relationships?: {
+    'campaign-messages'?: { data?: Array<{ type: string; id: string }> };
+    campaign_messages?: { data?: Array<{ type: string; id: string }> };
+  };
+}
+
+interface KlaviyoIncluded {
+  type: string;
+  id: string;
 }
 
 interface KlaviyoFlow {
@@ -73,21 +87,43 @@ function extractBlock(text: string, tag: string): string | null {
   return match ? match[1].trim() : null;
 }
 
-// Build a compact id -> name lookup table from a Klaviyo collection response
-function buildCampaignLookup(res: unknown): Record<string, { name: string; sent_at: string | null; status: string }> {
-  const out: Record<string, { name: string; sent_at: string | null; status: string }> = {};
-  if (!res || typeof res !== 'object') return out;
+// Build TWO lookup tables from a Klaviyo /campaigns response:
+// 1. campaign_id -> { name, sent_at, status }
+// 2. campaign_message_id -> { name, sent_at, status }   (the report rows are
+//    keyed by campaign_message_id, so we need this as a fallback)
+// Reads both camelCase and snake_case attribute names defensively, and walks
+// the JSON:API relationships to map message ids to their parent campaign.
+function buildCampaignLookup(res: unknown): {
+  byCampaignId: Record<string, { name: string; sent_at: string | null; status: string }>;
+  byMessageId: Record<string, { name: string; sent_at: string | null; status: string }>;
+} {
+  const byCampaignId: Record<string, { name: string; sent_at: string | null; status: string }> = {};
+  const byMessageId: Record<string, { name: string; sent_at: string | null; status: string }> = {};
+  if (!res || typeof res !== 'object') return { byCampaignId, byMessageId };
   const data = (res as { data?: KlaviyoCampaign[] }).data;
-  if (!Array.isArray(data)) return out;
+  if (!Array.isArray(data)) return { byCampaignId, byMessageId };
   for (const c of data) {
     if (!c?.id) continue;
-    out[c.id] = {
-      name: c.attributes?.name || '(untitled campaign)',
-      sent_at: c.attributes?.send_time || null,
-      status: c.attributes?.status || 'unknown',
+    const attrs = c.attributes || {};
+    const sentAt = attrs.send_time || attrs.sendTime || attrs.scheduled_at || attrs.scheduledAt || null;
+    const entry = {
+      name: attrs.name || '(untitled campaign)',
+      sent_at: sentAt,
+      status: attrs.status || 'unknown',
     };
+    byCampaignId[c.id] = entry;
+
+    // Walk relationships to find every campaign_message_id under this campaign
+    const rel = c.relationships || {};
+    const msgRefs =
+      rel['campaign-messages']?.data ||
+      rel.campaign_messages?.data ||
+      [];
+    for (const ref of msgRefs) {
+      if (ref?.id) byMessageId[ref.id] = entry;
+    }
   }
-  return out;
+  return { byCampaignId, byMessageId };
 }
 
 function buildFlowLookup(res: unknown): Record<string, { name: string; trigger: string; status: string }> {
@@ -151,7 +187,8 @@ interface NamedItem {
 
 function aggregateCampaignReport(
   res: unknown,
-  lookup: Record<string, { name: string; sent_at: string | null; status: string }>
+  byCampaignId: Record<string, { name: string; sent_at: string | null; status: string }>,
+  byMessageId: Record<string, { name: string; sent_at: string | null; status: string }>
 ): { totals: Record<string, number>; items: NamedItem[]; row_count: number } {
   const rows = extractReportRows(res);
   const items: NamedItem[] = [];
@@ -168,7 +205,10 @@ function aggregateCampaignReport(
     const stats = row.statistics || {};
     const groupings = row.groupings || {};
     const cId = groupings.campaign_id;
-    const meta = cId ? lookup[cId] : undefined;
+    const mId = groupings.campaign_message_id;
+    // Try campaign_id first, then fall back to campaign_message_id which is
+    // what the report actually groups by.
+    const meta = (cId && byCampaignId[cId]) || (mId && byMessageId[mId]) || undefined;
     const recipients = num(stats.recipients);
     const delivered = num(stats.delivered);
     const conversions = num(stats.conversions);
@@ -184,7 +224,7 @@ function aggregateCampaignReport(
     openRateDenom += delivered;
 
     items.push({
-      name: meta?.name || (cId ? `(unknown campaign ${cId.slice(0, 8)})` : '(unnamed)'),
+      name: meta?.name || '(name unavailable)',
       sent_at: meta?.sent_at || null,
       recipients,
       delivered,
@@ -429,9 +469,11 @@ export async function POST(request: NextRequest) {
     ];
 
     // Pull reports + name lookups in parallel.
-    // Campaigns: filter to ones sent within the period so we get a clean lookup table.
-    // Flows: get all live + recent so we can resolve flow_id -> name.
-    const campaignSendFilter = `and(equals(messages.channel,"email"),greater-or-equal(send_time,${startISO}))`;
+    // Campaigns: only the messages.channel filter is required by Klaviyo.
+    // The /campaigns endpoint does NOT support filtering by send_time, so we
+    // pull all email campaigns and let the report's timeframe do the work.
+    // We only need the lookup for name resolution.
+    const campaignsFilter = 'equals(messages.channel,"email")';
     const [campaignReportRes, flowReportRes, campaignsListRes, flowsListRes] = await Promise.all([
       safe(
         getCampaignReport(apiKey, {
@@ -450,7 +492,7 @@ export async function POST(request: NextRequest) {
         }),
         'get_flow_report'
       ),
-      safe(getCampaigns(apiKey, campaignSendFilter), 'get_campaigns_list'),
+      safe(getCampaigns(apiKey, campaignsFilter, { includeMessages: true }), 'get_campaigns_list'),
       safe(getFlows(apiKey), 'get_flows_list'),
     ]);
 
@@ -466,15 +508,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Build name lookups so we can resolve campaign_id / flow_id to real names.
-    const campaignLookup = buildCampaignLookup(campaignsListRes);
+    // Build name lookups so we can resolve campaign_id / message_id / flow_id to real names.
+    const { byCampaignId, byMessageId } = buildCampaignLookup(campaignsListRes);
     const flowLookup = buildFlowLookup(flowsListRes);
 
     // ─── SERVER-SIDE AGGREGATION ───
     // We compute totals + per-item rows ourselves so the AI never has to sum
     // across many rows (which is where it makes mistakes). It only needs to
     // pick the narrative.
-    const campaignAgg = aggregateCampaignReport(campaignReportRes, campaignLookup);
+    const campaignAgg = aggregateCampaignReport(campaignReportRes, byCampaignId, byMessageId);
     const flowAgg = aggregateFlowReport(flowReportRes, flowLookup);
 
     const combinedRevenue = round(campaignAgg.totals.total_revenue + flowAgg.totals.total_revenue, 2);
