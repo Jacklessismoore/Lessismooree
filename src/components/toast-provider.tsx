@@ -25,7 +25,7 @@ const ToasterComponent = dynamic(
               fontWeight: '500',
               letterSpacing: '0.04em',
               padding: '12px 16px',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.02)',
+              boxShadow: '0 12px 48px -8px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04), 0 0 60px -20px rgba(255, 255, 255, 0.06)',
               maxWidth: '360px',
             },
             success: {

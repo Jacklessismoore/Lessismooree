@@ -205,7 +205,7 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
           </div>
         )}
 
-        <div className="animate-fade-in">
+        <div key={pathname} className="route-fade">
           {children}
         </div>
       </main>

@@ -1,6 +1,6 @@
 'use client';
 
-import { ButtonHTMLAttributes, forwardRef } from 'react';
+import { ButtonHTMLAttributes, forwardRef, MouseEvent, useRef } from 'react';
 import { cn } from '@/lib/utils';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -10,10 +10,40 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = 'primary', size = 'md', loading, disabled, children, ...props }, ref) => {
+  ({ className, variant = 'primary', size = 'md', loading, disabled, children, onClick, ...props }, ref) => {
+    const innerRef = useRef<HTMLButtonElement | null>(null);
+
+    const setRefs = (el: HTMLButtonElement | null) => {
+      innerRef.current = el;
+      if (typeof ref === 'function') ref(el);
+      else if (ref) ref.current = el;
+    };
+
+    // Spawn a ripple at the click location, clean it up after the animation.
+    const spawnRipple = (e: MouseEvent<HTMLButtonElement>) => {
+      const btn = innerRef.current;
+      if (!btn) return;
+      const rect = btn.getBoundingClientRect();
+      const size = Math.max(rect.width, rect.height);
+      const ripple = document.createElement('span');
+      ripple.className = 'ripple-child';
+      ripple.style.width = `${size}px`;
+      ripple.style.height = `${size}px`;
+      ripple.style.left = `${e.clientX - rect.left - size / 2}px`;
+      ripple.style.top = `${e.clientY - rect.top - size / 2}px`;
+      btn.appendChild(ripple);
+      setTimeout(() => ripple.remove(), 650);
+    };
+
+    const handleClick = (e: MouseEvent<HTMLButtonElement>) => {
+      if (disabled || loading) return;
+      spawnRipple(e);
+      onClick?.(e);
+    };
+
     const base = [
       'inline-flex items-center justify-center font-semibold uppercase tracking-wider',
-      'rounded-xl btn-polish focus-ring',
+      'rounded-xl btn-polish focus-ring ripple-origin',
       'disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:transform-none',
     ].join(' ');
 
@@ -47,7 +77,8 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 
     return (
       <button
-        ref={ref}
+        ref={setRefs}
+        onClick={handleClick}
         className={cn(base, variants[variant], sizes[size], className)}
         disabled={disabled || loading}
         {...props}
