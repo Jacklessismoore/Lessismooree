@@ -9,19 +9,32 @@ import { PageHeader } from '@/components/ui/page-header';
 import { BrandCard } from '@/components/ui/brand-card';
 import toast from 'react-hot-toast';
 
-type Period = '7d' | '14d' | '30d' | '90d';
+type Period = '7d' | '14d' | '30d' | '90d' | 'custom';
 
 const PERIOD_OPTIONS: Array<{ value: Period; label: string }> = [
   { value: '7d', label: 'Last 7 days' },
   { value: '14d', label: 'Last 14 days' },
   { value: '30d', label: 'Last 30 days' },
   { value: '90d', label: 'Last 90 days' },
+  { value: 'custom', label: 'Custom date range…' },
 ];
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function daysAgoISO(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
 
 export default function WeeklyWrapPage() {
   const { brands, managers, selectedPod } = useApp();
   const [selectedBrand, setSelectedBrand] = useState<Brand | null>(null);
   const [period, setPeriod] = useState<Period>('7d');
+  const [customStart, setCustomStart] = useState<string>(daysAgoISO(7));
+  const [customEnd, setCustomEnd] = useState<string>(todayISO());
   const [generating, setGenerating] = useState(false);
   const [report, setReport] = useState<string | null>(null);
 
@@ -49,13 +62,27 @@ export default function WeeklyWrapPage() {
 
   const handleGenerate = async () => {
     if (!selectedBrand) return;
+    if (period === 'custom') {
+      if (!customStart || !customEnd) {
+        toast.error('Pick both a start and end date');
+        return;
+      }
+      if (new Date(customEnd) < new Date(customStart)) {
+        toast.error('End date must be after start date');
+        return;
+      }
+    }
     setGenerating(true);
     setReport(null);
     try {
       const res = await fetch('/api/weekly-wrap/build', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ brandId: selectedBrand.id, period }),
+        body: JSON.stringify({
+          brandId: selectedBrand.id,
+          period,
+          ...(period === 'custom' ? { customStart, customEnd } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to generate');
@@ -142,24 +169,50 @@ export default function WeeklyWrapPage() {
             </Button>
           </Card>
 
-          {/* Period toggle + generate */}
+          {/* Period selector + generate */}
           <Card className="p-6">
             <p className="label-text mb-3">Time period</p>
-            <div className="flex items-center gap-2 mb-6 flex-wrap">
-              {PERIOD_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setPeriod(opt.value)}
-                  className={`px-4 py-2 rounded-xl text-[11px] uppercase tracking-wider font-medium transition-all duration-200 ${
-                    period === opt.value
-                      ? 'bg-white text-black'
-                      : 'bg-white/[0.03] border border-white/[0.06] text-[#666] hover:text-white hover:border-white/15'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
+            <div className="mb-4">
+              <select
+                value={period}
+                onChange={(e) => setPeriod(e.target.value as Period)}
+                className="w-full max-w-xs bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white focus:outline-none focus:border-white/25 transition-colors cursor-pointer"
+              >
+                {PERIOD_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value} className="bg-[#0A0A0A] text-white">
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
             </div>
+
+            {period === 'custom' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6 animate-fade">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">Start date</label>
+                  <input
+                    type="date"
+                    value={customStart}
+                    max={customEnd || todayISO()}
+                    onChange={(e) => setCustomStart(e.target.value)}
+                    className="w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white focus:outline-none focus:border-white/25 transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">End date</label>
+                  <input
+                    type="date"
+                    value={customEnd}
+                    min={customStart}
+                    max={todayISO()}
+                    onChange={(e) => setCustomEnd(e.target.value)}
+                    className="w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white focus:outline-none focus:border-white/25 transition-colors"
+                  />
+                </div>
+              </div>
+            )}
+
+            {period !== 'custom' && <div className="mb-6" />}
 
             <Button onClick={handleGenerate} disabled={generating}>
               {generating ? 'Generating…' : 'Generate report'}

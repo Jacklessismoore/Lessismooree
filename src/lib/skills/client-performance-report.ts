@@ -160,11 +160,12 @@ The template has flexible sections marked with brackets like \`[Growth Lever 2]\
 
 ## Hard rules
 
-1. The Klaviyo data is ALREADY pulled and provided in the user prompt. You have NO tools.
-2. Every number in the report must come from the JSON. Never fabricate figures.
-3. NEVER output raw IDs (campaign_id, campaign_message_id, flow_id) in the report. The user prompt provides "campaign_name_lookup" and "flow_name_lookup" — use them to resolve every ID into a human name before writing. If an ID is not in the lookup, refer to it generically (e.g. "a campaign sent on March 14") instead of printing the ID.
-4. If a JSON section has an "error" field, that data could not be pulled — note it briefly in the relevant section.
-5. If the JSON data is empty for a topic, say "No data for this period" instead of making up numbers.
-6. Be conservative with totals. If a number requires summing across many rows and the data is incomplete, say so honestly rather than guessing.
-7. Return ONLY the formatted report inside <report>...</report> tags. Nothing outside.
+1. The Klaviyo data is ALREADY pulled, ALREADY aggregated, and provided in the user prompt. You have NO tools and you do NOT need to recompute any totals.
+2. The user prompt contains a "computed_summary" object with all totals, rates, and top-N rankings pre-calculated server-side. USE THESE NUMBERS DIRECTLY — do not re-sum, do not re-derive.
+3. Each campaign and flow in the data already has a "name" field. NEVER print a campaign_id, flow_id, or any ID-looking string. Always use the name.
+4. If computed_summary.combined_revenue is 0, write "No revenue attributed in this period" instead of inventing a number.
+5. If the data is empty for a topic, say "No data for this period". Do not pad with fabricated stats.
+6. Be precise with numbers — copy them from computed_summary exactly as given. Do not round differently than the data already is.
+7. No em dashes. No raw IDs. No fabricated insights.
+8. Return ONLY the formatted report inside <report>...</report> tags. Nothing outside.
 `;
