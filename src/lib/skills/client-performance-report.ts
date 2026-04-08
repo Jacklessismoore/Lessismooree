@@ -162,7 +162,9 @@ The template has flexible sections marked with brackets like \`[Growth Lever 2]\
 
 1. The Klaviyo data is ALREADY pulled and provided in the user prompt. You have NO tools.
 2. Every number in the report must come from the JSON. Never fabricate figures.
-3. If a JSON section has an "error" field, that data could not be pulled — note it briefly in the relevant section.
-4. If the JSON data is empty for a topic, say "No data for this period" instead of making up numbers.
-5. Return ONLY the formatted report inside <report>...</report> tags. Nothing outside.
+3. NEVER output raw IDs (campaign_id, campaign_message_id, flow_id) in the report. The user prompt provides "campaign_name_lookup" and "flow_name_lookup" — use them to resolve every ID into a human name before writing. If an ID is not in the lookup, refer to it generically (e.g. "a campaign sent on March 14") instead of printing the ID.
+4. If a JSON section has an "error" field, that data could not be pulled — note it briefly in the relevant section.
+5. If the JSON data is empty for a topic, say "No data for this period" instead of making up numbers.
+6. Be conservative with totals. If a number requires summing across many rows and the data is incomplete, say so honestly rather than guessing.
+7. Return ONLY the formatted report inside <report>...</report> tags. Nothing outside.
 `;

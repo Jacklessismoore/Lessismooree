@@ -9,7 +9,14 @@ import { PageHeader } from '@/components/ui/page-header';
 import { BrandCard } from '@/components/ui/brand-card';
 import toast from 'react-hot-toast';
 
-type Period = '7d' | '30d';
+type Period = '7d' | '14d' | '30d' | '90d';
+
+const PERIOD_OPTIONS: Array<{ value: Period; label: string }> = [
+  { value: '7d', label: 'Last 7 days' },
+  { value: '14d', label: 'Last 14 days' },
+  { value: '30d', label: 'Last 30 days' },
+  { value: '90d', label: 'Last 90 days' },
+];
 
 export default function WeeklyWrapPage() {
   const { brands, managers, selectedPod } = useApp();
@@ -138,27 +145,20 @@ export default function WeeklyWrapPage() {
           {/* Period toggle + generate */}
           <Card className="p-6">
             <p className="label-text mb-3">Time period</p>
-            <div className="flex items-center gap-2 mb-6">
-              <button
-                onClick={() => setPeriod('7d')}
-                className={`px-4 py-2 rounded-xl text-[11px] uppercase tracking-wider font-medium transition-all duration-200 ${
-                  period === '7d'
-                    ? 'bg-white text-black'
-                    : 'bg-white/[0.03] border border-white/[0.06] text-[#666] hover:text-white hover:border-white/15'
-                }`}
-              >
-                Last 7 days
-              </button>
-              <button
-                onClick={() => setPeriod('30d')}
-                className={`px-4 py-2 rounded-xl text-[11px] uppercase tracking-wider font-medium transition-all duration-200 ${
-                  period === '30d'
-                    ? 'bg-white text-black'
-                    : 'bg-white/[0.03] border border-white/[0.06] text-[#666] hover:text-white hover:border-white/15'
-                }`}
-              >
-                Last 30 days
-              </button>
+            <div className="flex items-center gap-2 mb-6 flex-wrap">
+              {PERIOD_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setPeriod(opt.value)}
+                  className={`px-4 py-2 rounded-xl text-[11px] uppercase tracking-wider font-medium transition-all duration-200 ${
+                    period === opt.value
+                      ? 'bg-white text-black'
+                      : 'bg-white/[0.03] border border-white/[0.06] text-[#666] hover:text-white hover:border-white/15'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
 
             <Button onClick={handleGenerate} disabled={generating}>
