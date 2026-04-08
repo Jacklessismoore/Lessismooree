@@ -46,19 +46,6 @@ function round(v: number, d = 2): number {
   return Math.round(v * m) / m;
 }
 
-function extractBlock(text: string, tag: string): string | null {
-  const match = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
-  if (match) return match[1].trim();
-  // Fallback: strip any stray opening/closing tags and return the body if it
-  // looks like a markdown report.
-  const cleaned = text
-    .replace(new RegExp(`<${tag}>`, 'g'), '')
-    .replace(new RegExp(`</${tag}>`, 'g'), '')
-    .trim();
-  if (cleaned.length > 200 && /^#/m.test(cleaned)) return cleaned;
-  return null;
-}
-
 interface VariationData {
   name: string;
   recipients: number;
@@ -304,45 +291,57 @@ export async function POST(request: NextRequest) {
         : null,
     };
 
+    // Slim the tests down for the AI prompt — it only needs enough context
+    // to write a one-line "why" per test. We don't need every rate.
+    const slimTests = tests.map((t) => ({
+      id: `${t.flow_id}:${t.flow_message_id}`,
+      flow_name: t.flow_name,
+      flow_message_label: t.flow_message_label,
+      classification: t.classification,
+      winner_variation: t.server_suggested_winner,
+      lift_pct: t.lift_pct,
+      variations: t.variations.map((v) => ({
+        name: v.name,
+        recipients: v.recipients,
+        open_rate_pct: v.open_rate_pct,
+        click_rate_pct: v.click_rate_pct,
+        conversion_rate_pct: v.conversion_rate_pct,
+        revenue: v.revenue,
+      })),
+    }));
+
     const payloadJson = JSON.stringify(
       {
-        brand: { name: brand.name, category: brand.category || 'unknown', voice: brand.voice || 'unknown' },
+        brand: { name: brand.name },
         period_label: periodLabel,
         computed_summary: computedSummary,
-        tests,
+        tests: slimTests,
       },
       null,
       2
     );
 
-    const userPrompt = `Write the A/B test results report for ${brand.name} covering ${periodLabel}.
+    const userPrompt = `Write the JSON output for an A/B test results report for ${brand.name} (${periodLabel}).
 
-=== CRITICAL: USE THE COMPUTED SUMMARY VERBATIM ===
-The "computed_summary" object below has already been calculated server-side from the raw test data. For the Summary section of your report, you MUST use ONLY the numbers from computed_summary. DO NOT invent or estimate. The numbers there are:
-- total_tests: how many tests ran
-- clear_winners: tests with a decisive winner
-- too_close_to_call: tests where the lift was <20%
-- no_revenue: tests where neither variation generated revenue
-- insufficient_sample: tests with <500 total recipients
-- strongest_lift_test: the single best-performing test with its flow name, variation name, lift %, and the exact revenue numbers
+Return ONLY a JSON object inside <json>...</json> tags with this exact shape:
 
-For example, if computed_summary.strongest_lift_test.flow_name is "LIM | Welcome Flow" and .lift_pct is 33.9, your Summary MUST say "LIM | Welcome Flow" and "+33.9% lift" — never invent a different flow name or a different percentage.
+{
+  "summary": "ONE short paragraph (2-3 sentences max) describing how many tests ran, how many had winners, and the single strongest result. Use computed_summary numbers verbatim.",
+  "insights": {
+    "<test_id>": "ONE concise sentence explaining why the winner won, or why the test is inconclusive. Max 20 words. No fluff."
+  }
+}
 
-=== FOR EACH TEST IN tests[] ===
-Output a section per test. For the variation table, put the EXACT variation name from test.variations[i].name in the Variation column — nothing more, nothing less. Never concatenate dates, flow names, or test numbers into that cell.
+The "insights" keys are the test "id" values from the tests[] array. Every test in tests[] must have an entry.
 
-Use the classification field to decide the Winner/Recommendation:
-- clear_winner: Winner = server_suggested_winner, Lift = lift_pct%, Recommendation = "Pick winner now"
-- too_close: Winner = "Inconclusive — too close to call", Recommendation = "Continue testing"
-- no_revenue: Winner = "Inconclusive — no revenue", Recommendation = "Pause test and review flow messaging"
-- insufficient_sample: Winner = "Inconclusive — insufficient sample", Recommendation = "Keep running until 500+ recipients per variation"
-
-=== HARD RULES ===
-1. NEVER fabricate numbers. Every figure must come from computed_summary or tests[].
-2. NEVER invent a flow name. Use test.flow_name exactly.
-3. NEVER put anything except the raw variation name in the Variation column.
-4. NEVER claim a flow is a winner unless its classification in tests[] is "clear_winner".
-5. Return ONLY the markdown inside <report>...</report> tags.
+RULES:
+- Use computed_summary numbers verbatim. NEVER invent numbers.
+- Use the exact flow_name from each test. NEVER rename.
+- For clear_winner tests: explain what drove the lift (higher conv rate / higher click rate / more revenue) in one sentence.
+- For no_revenue tests: say "No revenue from either variation."
+- For insufficient_sample tests: say "Not enough recipients — need X+ to call it" where X is 500.
+- For too_close tests: say "Performance gap under 20% — keep running."
+- No em dashes. No fluff. Just facts.
 
 === DATA ===
 \`\`\`json
@@ -352,7 +351,7 @@ ${payloadJson}
 
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 6000,
+      max_tokens: 3000,
       system: TEST_RESULTS_ANALYST_SKILL,
       messages: [{ role: 'user', content: userPrompt }],
     });
@@ -362,11 +361,21 @@ ${payloadJson}
       .map((b) => ('text' in b ? b.text : ''))
       .join('');
 
-    const report = extractBlock(fullText, 'report');
-    if (!report) {
+    // Extract JSON from <json> tags, falling back to any JSON-shaped block
+    let parsed: { summary?: string; insights?: Record<string, string> } | null = null;
+    const jsonMatch = fullText.match(/<json>([\s\S]*?)<\/json>/) || fullText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        parsed = JSON.parse((jsonMatch[1] || jsonMatch[0]).trim());
+      } catch {
+        parsed = null;
+      }
+    }
+
+    if (!parsed || !parsed.summary) {
       return NextResponse.json(
         {
-          error: `AI returned no usable report. First 500 chars: ${fullText.slice(0, 500) || '(empty)'}`,
+          error: `AI returned no usable output. First 500 chars: ${fullText.slice(0, 500) || '(empty)'}`,
         },
         { status: 500 }
       );
@@ -375,8 +384,10 @@ ${payloadJson}
     return NextResponse.json({
       brand: { id: brand.id, name: brand.name },
       periodLabel,
-      report,
-      tests, // return the raw structured data so the DOCX exporter can re-render it
+      summary: parsed.summary,
+      insights: parsed.insights || {},
+      tests,
+      computed_summary: computedSummary,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

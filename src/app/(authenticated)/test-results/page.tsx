@@ -51,7 +51,8 @@ export default function TestResultsPage() {
   const [selectedFlowIds, setSelectedFlowIds] = useState<Set<string>>(new Set());
 
   const [analysing, setAnalysing] = useState(false);
-  const [report, setReport] = useState<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [insights, setInsights] = useState<Record<string, string>>({});
   const [rawTests, setRawTests] = useState<TestResultTest[] | null>(null);
   const [exporting, setExporting] = useState(false);
 
@@ -78,7 +79,8 @@ export default function TestResultsPage() {
   const resetWorkflow = () => {
     setPulledFlows(null);
     setSelectedFlowIds(new Set());
-    setReport(null);
+    setSummary(null);
+    setInsights({});
     setRawTests(null);
   };
 
@@ -99,7 +101,8 @@ export default function TestResultsPage() {
     if (!selectedBrand || !validatePeriod()) return;
     setPulling(true);
     setPulledFlows(null);
-    setReport(null);
+    setSummary(null);
+    setInsights({});
     setRawTests(null);
     try {
       const res = await fetch('/api/test-results/pull-flows', {
@@ -140,7 +143,8 @@ export default function TestResultsPage() {
   const handleAnalyse = async () => {
     if (!selectedBrand || selectedFlowIds.size === 0) return;
     setAnalysing(true);
-    setReport(null);
+    setSummary(null);
+    setInsights({});
     setRawTests(null);
     try {
       const res = await fetch('/api/test-results/analyse', {
@@ -155,7 +159,8 @@ export default function TestResultsPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to analyse');
-      setReport(data.report);
+      setSummary(data.summary || null);
+      setInsights(data.insights || {});
       setRawTests(data.tests || []);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to analyse');
@@ -164,10 +169,47 @@ export default function TestResultsPage() {
     }
   };
 
+  // Build a Slack-friendly text representation of the table for copy-paste
+  const buildSlackText = (): string => {
+    if (!summary || !rawTests) return '';
+    const lines: string[] = [];
+    lines.push(`*A/B Test Results — ${selectedBrand?.name || ''}*`);
+    lines.push(
+      period === 'custom'
+        ? `${customStart} to ${customEnd}`
+        : PERIOD_OPTIONS.find((p) => p.value === period)?.label || ''
+    );
+    lines.push('');
+    lines.push(summary);
+    lines.push('');
+    for (const t of rawTests) {
+      const id = `${t.flow_id}:${t.flow_message_id}`;
+      const why = insights[id] || '';
+      const verdict = verdictFor(t);
+      lines.push(`• *${t.flow_name} — ${t.flow_message_label}*`);
+      lines.push(`  Winner: ${verdict}`);
+      if (why) lines.push(`  Why: ${why}`);
+    }
+    return lines.join('\n');
+  };
+
+  const verdictFor = (t: TestResultTest): string => {
+    const ct = (t as TestResultTest & { classification?: string; lift_pct?: number | null }).classification;
+    const lift = (t as TestResultTest & { lift_pct?: number | null }).lift_pct;
+    if (ct === 'clear_winner' && t.server_suggested_winner) {
+      return `${t.server_suggested_winner}${lift != null ? ` (+${lift}%)` : ''}`;
+    }
+    if (ct === 'too_close') return 'Inconclusive — too close';
+    if (ct === 'no_revenue') return 'Inconclusive — no revenue';
+    if (ct === 'insufficient_sample') return 'Inconclusive — low sample';
+    return 'Inconclusive';
+  };
+
   const handleCopy = async () => {
-    if (!report) return;
+    const text = buildSlackText();
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(report);
+      await navigator.clipboard.writeText(text);
       toast.success('Copied to clipboard');
     } catch {
       toast.error('Failed to copy');
@@ -175,13 +217,14 @@ export default function TestResultsPage() {
   };
 
   const handleExport = async () => {
-    if (!selectedBrand || !report || !rawTests) return;
+    if (!selectedBrand || !summary || !rawTests) return;
     setExporting(true);
     try {
       await exportTestResultsDocx({
         brandName: selectedBrand.name,
         periodLabel: period === 'custom' ? `${customStart} to ${customEnd}` : PERIOD_OPTIONS.find((p) => p.value === period)?.label || '',
-        markdownReport: report,
+        summary,
+        insights,
         tests: rawTests,
       });
       toast.success('DOCX downloaded');
@@ -377,7 +420,7 @@ export default function TestResultsPage() {
           )}
 
           {/* Step 3: Output */}
-          {report && (
+          {summary && rawTests && (
             <Card className="p-6 animate-fade">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                 <p className="label-text">3. Findings</p>
@@ -390,9 +433,51 @@ export default function TestResultsPage() {
                   </Button>
                 </div>
               </div>
-              <pre className="whitespace-pre-wrap text-[12px] text-[#e5e5e5] leading-relaxed font-sans bg-white/[0.02] border border-white/[0.04] rounded-xl p-4 overflow-x-auto">
-                {report}
-              </pre>
+
+              <p className="text-[12px] text-[#ccc] leading-relaxed mb-5">{summary}</p>
+
+              <div className="overflow-x-auto -mx-6 px-6">
+                <table className="w-full text-[11px] border-collapse">
+                  <thead>
+                    <tr className="border-b border-white/[0.08]">
+                      <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-[#888] font-semibold">Flow</th>
+                      <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-[#888] font-semibold">Message</th>
+                      <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-[#888] font-semibold">Winner</th>
+                      <th className="text-right px-3 py-2 text-[10px] uppercase tracking-wider text-[#888] font-semibold">Lift</th>
+                      <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-[#888] font-semibold">Why</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rawTests.map((t) => {
+                      const id = `${t.flow_id}:${t.flow_message_id}`;
+                      const why = insights[id] || '';
+                      const verdict = verdictFor(t);
+                      const ct = (t as TestResultTest & { classification?: string }).classification;
+                      const lift = (t as TestResultTest & { lift_pct?: number | null }).lift_pct;
+                      const isWinner = ct === 'clear_winner';
+                      return (
+                        <tr key={id} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
+                          <td className="px-3 py-3 text-white align-top">{t.flow_name}</td>
+                          <td className="px-3 py-3 text-[#aaa] align-top">{t.flow_message_label}</td>
+                          <td className="px-3 py-3 align-top">
+                            <span className={isWinner ? 'text-green-400 font-medium' : 'text-[#666]'}>
+                              {verdict}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-right align-top">
+                            {isWinner && lift != null ? (
+                              <span className="text-green-400 font-medium">+{lift}%</span>
+                            ) : (
+                              <span className="text-[#444]">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3 text-[#ccc] align-top">{why}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </Card>
           )}
         </div>

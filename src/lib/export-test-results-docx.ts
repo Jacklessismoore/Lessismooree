@@ -16,14 +16,12 @@ import {
 import { saveAs } from 'file-saver';
 
 // Page: US Letter 12240 DXA wide, 600 DXA each side margin = 11040 usable.
-// Columns for the per-variation stats table.
-const COL_VARIATION = 2200;
-const COL_RECIPIENTS = 1200;
-const COL_OPEN = 1300;
-const COL_CLICK = 1300;
-const COL_CONV = 1500;
-const COL_REVENUE = 1700;
-const COL_RPR = 1840;
+// Column widths for the consolidated findings table.
+const COL_FLOW = 2600;
+const COL_MESSAGE = 2000;
+const COL_WINNER = 2200;
+const COL_LIFT = 900;
+const COL_WHY = 3340;
 
 const BORDER = {
   top: { style: BorderStyle.SINGLE, size: 1, color: 'DDDDDD' },
@@ -34,7 +32,7 @@ const BORDER = {
 
 function para(text: string, opts: Partial<{ bold: boolean; size: number; color: string; spacingAfter: number }> = {}) {
   return new Paragraph({
-    spacing: { after: opts.spacingAfter ?? 80 },
+    spacing: { after: opts.spacingAfter ?? 100 },
     children: [
       new TextRun({
         text,
@@ -55,7 +53,7 @@ function heading(text: string, level: typeof HeadingLevel[keyof typeof HeadingLe
   });
 }
 
-function cell(text: string, width: number, opts: Partial<{ bold: boolean; bg: string }> = {}) {
+function cell(text: string, width: number, opts: Partial<{ bold: boolean; bg: string; color: string }> = {}) {
   return new TableCell({
     width: { size: width, type: WidthType.DXA },
     shading: opts.bg ? { fill: opts.bg } : undefined,
@@ -68,7 +66,7 @@ function cell(text: string, width: number, opts: Partial<{ bold: boolean; bg: st
             bold: opts.bold ?? false,
             size: 20,
             font: 'Calibri',
-            color: opts.bold ? 'FFFFFF' : '000000',
+            color: opts.color || (opts.bold && opts.bg ? 'FFFFFF' : '000000'),
           }),
         ],
       }),
@@ -76,11 +74,7 @@ function cell(text: string, width: number, opts: Partial<{ bold: boolean; bg: st
   });
 }
 
-function money(n: number): string {
-  if (n < 100) return `$${n.toFixed(2)}`;
-  return `$${Math.round(n).toLocaleString('en-US')}`;
-}
-
+// Re-exported so the page can still import the type
 export interface TestResultVariation {
   name: string;
   recipients: number;
@@ -100,111 +94,86 @@ export interface TestResultTest {
   flow_message_label: string;
   variations: TestResultVariation[];
   server_suggested_winner: string | null;
+  classification?: 'clear_winner' | 'no_revenue' | 'insufficient_sample' | 'too_close';
+  lift_pct?: number | null;
 }
 
 export interface TestResultsExportInput {
   brandName: string;
   periodLabel: string;
-  markdownReport: string; // The narrative report from the AI
+  summary: string;
+  insights: Record<string, string>;
   tests: TestResultTest[];
+}
+
+function verdictFor(t: TestResultTest): { text: string; color: string } {
+  const ct = t.classification;
+  if (ct === 'clear_winner' && t.server_suggested_winner) {
+    return { text: t.server_suggested_winner, color: '0A7A3A' };
+  }
+  if (ct === 'too_close') return { text: 'Inconclusive — too close', color: '666666' };
+  if (ct === 'no_revenue') return { text: 'Inconclusive — no revenue', color: '666666' };
+  if (ct === 'insufficient_sample') return { text: 'Inconclusive — low sample', color: '666666' };
+  return { text: 'Inconclusive', color: '666666' };
 }
 
 export async function exportTestResultsDocx(input: TestResultsExportInput): Promise<void> {
   const children: (Paragraph | Table)[] = [];
 
-  // Title block
+  // Title + period
   children.push(heading(`A/B Test Results — ${input.brandName}`, HeadingLevel.HEADING_1));
   children.push(para(input.periodLabel, { color: '666666', spacingAfter: 200 }));
 
-  // Narrative section from the AI. We render it as plain paragraphs (the AI
-  // already formatted it with headings and bullets — we keep it simple here).
-  children.push(heading('Narrative', HeadingLevel.HEADING_2));
-  for (const line of input.markdownReport.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      children.push(para('', { spacingAfter: 80 }));
-      continue;
-    }
-    if (trimmed.startsWith('# ')) {
-      children.push(heading(trimmed.slice(2), HeadingLevel.HEADING_1));
-    } else if (trimmed.startsWith('## ')) {
-      children.push(heading(trimmed.slice(3), HeadingLevel.HEADING_2));
-    } else if (trimmed.startsWith('### ')) {
-      children.push(heading(trimmed.slice(4), HeadingLevel.HEADING_3));
-    } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      children.push(
-        new Paragraph({
-          bullet: { level: 0 },
-          spacing: { after: 60 },
-          children: [new TextRun({ text: trimmed.slice(2), size: 22, font: 'Calibri' })],
-        })
-      );
-    } else if (/^\|.*\|$/.test(trimmed)) {
-      // Skip markdown table lines — we render our own tables below
-      continue;
-    } else {
-      children.push(para(trimmed));
-    }
-  }
+  // Summary paragraph
+  children.push(para(input.summary, { size: 22, spacingAfter: 240 }));
 
-  // Raw data tables — one per test
-  children.push(heading('Raw Data', HeadingLevel.HEADING_2));
+  // One consolidated findings table
+  const headerRow = new TableRow({
+    tableHeader: true,
+    children: [
+      cell('Flow', COL_FLOW, { bold: true, bg: '1A1A1A' }),
+      cell('Message', COL_MESSAGE, { bold: true, bg: '1A1A1A' }),
+      cell('Winner', COL_WINNER, { bold: true, bg: '1A1A1A' }),
+      cell('Lift', COL_LIFT, { bold: true, bg: '1A1A1A' }),
+      cell('Why', COL_WHY, { bold: true, bg: '1A1A1A' }),
+    ],
+  });
 
-  for (const test of input.tests) {
-    children.push(heading(`${test.flow_name}`, HeadingLevel.HEADING_3));
-    if (test.server_suggested_winner) {
-      children.push(
-        para(`Suggested winner: ${test.server_suggested_winner}`, { color: '0A7A3A', bold: true })
-      );
-    }
-
-    // Header row
-    const headerRow = new TableRow({
-      tableHeader: true,
+  const dataRows = input.tests.map((t) => {
+    const id = `${t.flow_id}:${t.flow_message_id}`;
+    const why = input.insights[id] || '';
+    const verdict = verdictFor(t);
+    const liftText =
+      t.classification === 'clear_winner' && t.lift_pct != null ? `+${t.lift_pct}%` : '—';
+    return new TableRow({
       children: [
-        cell('Variation', COL_VARIATION, { bold: true, bg: '1A1A1A' }),
-        cell('Recipients', COL_RECIPIENTS, { bold: true, bg: '1A1A1A' }),
-        cell('Open', COL_OPEN, { bold: true, bg: '1A1A1A' }),
-        cell('Click', COL_CLICK, { bold: true, bg: '1A1A1A' }),
-        cell('Conv.', COL_CONV, { bold: true, bg: '1A1A1A' }),
-        cell('Revenue', COL_REVENUE, { bold: true, bg: '1A1A1A' }),
-        cell('RPR', COL_RPR, { bold: true, bg: '1A1A1A' }),
+        cell(t.flow_name, COL_FLOW),
+        cell(t.flow_message_label, COL_MESSAGE),
+        cell(verdict.text, COL_WINNER, { color: verdict.color, bold: t.classification === 'clear_winner' }),
+        cell(liftText, COL_LIFT, {
+          color: t.classification === 'clear_winner' ? '0A7A3A' : '999999',
+          bold: t.classification === 'clear_winner',
+        }),
+        cell(why, COL_WHY),
       ],
     });
+  });
 
-    const dataRows = test.variations.map(
-      (v) =>
-        new TableRow({
-          children: [
-            cell(v.name, COL_VARIATION),
-            cell(v.recipients.toLocaleString(), COL_RECIPIENTS),
-            cell(`${v.open_rate_pct.toFixed(1)}%`, COL_OPEN),
-            cell(`${v.click_rate_pct.toFixed(2)}%`, COL_CLICK),
-            cell(`${v.conversion_rate_pct.toFixed(2)}%`, COL_CONV),
-            cell(money(v.revenue), COL_REVENUE),
-            cell(money(v.rpr), COL_RPR),
-          ],
-        })
-    );
-
-    children.push(
-      new Table({
-        layout: TableLayoutType.FIXED,
-        columnWidths: [COL_VARIATION, COL_RECIPIENTS, COL_OPEN, COL_CLICK, COL_CONV, COL_REVENUE, COL_RPR],
-        borders: {
-          top: BORDER.top,
-          bottom: BORDER.bottom,
-          left: BORDER.left,
-          right: BORDER.right,
-          insideHorizontal: BORDER.top,
-          insideVertical: BORDER.left,
-        },
-        rows: [headerRow, ...dataRows],
-      })
-    );
-
-    children.push(para('', { spacingAfter: 160 }));
-  }
+  children.push(
+    new Table({
+      layout: TableLayoutType.FIXED,
+      columnWidths: [COL_FLOW, COL_MESSAGE, COL_WINNER, COL_LIFT, COL_WHY],
+      borders: {
+        top: BORDER.top,
+        bottom: BORDER.bottom,
+        left: BORDER.left,
+        right: BORDER.right,
+        insideHorizontal: BORDER.top,
+        insideVertical: BORDER.left,
+      },
+      rows: [headerRow, ...dataRows],
+    })
+  );
 
   const doc = new Document({
     sections: [
