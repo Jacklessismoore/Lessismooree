@@ -19,7 +19,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 
     const variants = {
       primary: [
-        'bg-white text-black',
+        'bg-white text-black btn-sheen',
         'hover:bg-gray-100 hover:shadow-[0_0_28px_rgba(255,255,255,0.12)]',
         'shadow-[0_0_16px_rgba(255,255,255,0.06)]',
       ].join(' '),
@@ -53,9 +53,9 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         {...props}
       >
         {loading && (
-          <div className="w-3.5 h-3.5 border-2 border-current/20 border-t-current rounded-full spinner-smooth mr-2" />
+          <div className="relative z-10 w-3.5 h-3.5 border-2 border-current/20 border-t-current rounded-full spinner-smooth mr-2" />
         )}
-        {children}
+        <span className="relative z-10 inline-flex items-center">{children}</span>
       </button>
     );
   }

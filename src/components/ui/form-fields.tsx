@@ -13,11 +13,9 @@ export function Label({ children, className, ...props }: { children: ReactNode; 
 }
 
 const inputBase = [
-  'w-full bg-white/[0.03] border border-white/[0.06] rounded-xl',
+  'w-full bg-white/[0.03] border border-white/[0.06] rounded-xl input-polish',
   'px-4 py-3 text-sm text-white',
   'placeholder:text-[#444]',
-  'focus:outline-none focus:border-white/20 focus:bg-white/[0.04]',
-  'transition-all duration-200 ease-out',
 ].join(' ');
 
 // Input

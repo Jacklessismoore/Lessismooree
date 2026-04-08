@@ -482,6 +482,155 @@ input.no-focus-ring {
   width: 60%;
 }
 
+/* ─── Input polish — hover bg + focus grow ─── */
+.input-polish {
+  transition:
+    background-color 0.2s var(--ease-out-quart),
+    border-color 0.2s var(--ease-out-quart),
+    box-shadow 0.2s var(--ease-out-quart);
+}
+.input-polish:hover:not(:focus):not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.input-polish:focus-visible,
+.input-polish:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+}
+
+/* ─── Table row slide-in stagger ─── */
+@keyframes row-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.stagger-rows > tr {
+  animation: row-slide-in 0.3s var(--ease-out-quart) both;
+}
+.stagger-rows > tr:nth-child(1) { animation-delay: 30ms; }
+.stagger-rows > tr:nth-child(2) { animation-delay: 60ms; }
+.stagger-rows > tr:nth-child(3) { animation-delay: 90ms; }
+.stagger-rows > tr:nth-child(4) { animation-delay: 120ms; }
+.stagger-rows > tr:nth-child(5) { animation-delay: 150ms; }
+.stagger-rows > tr:nth-child(6) { animation-delay: 180ms; }
+.stagger-rows > tr:nth-child(7) { animation-delay: 210ms; }
+.stagger-rows > tr:nth-child(8) { animation-delay: 240ms; }
+.stagger-rows > tr:nth-child(9) { animation-delay: 270ms; }
+.stagger-rows > tr:nth-child(10) { animation-delay: 300ms; }
+.stagger-rows > tr:nth-child(n+11) { animation-delay: 330ms; }
+
+/* ─── Primary button sheen sweep on hover ─── */
+.btn-sheen {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.btn-sheen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.35) 50%,
+    transparent 70%
+  );
+  transform: translateX(-120%);
+  transition: transform 0.7s var(--ease-out-expo);
+  pointer-events: none;
+}
+.btn-sheen:hover:not(:disabled)::after {
+  transform: translateX(120%);
+}
+
+/* ─── Gentle glow pulse for "live" indicators ─── */
+@keyframes gentle-glow {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+.glow-dot {
+  animation: gentle-glow 2.4s var(--ease-out-quart) infinite;
+}
+
+/* ─── Number tick-in (for counters/stats appearing) ─── */
+@keyframes number-tick {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-number {
+  animation: number-tick 0.5s var(--ease-out-quart) both;
+}
+
+/* ─── Chip / tag press bounce ─── */
+.chip-press {
+  transition: transform 0.15s var(--ease-spring), background-color 0.2s var(--ease-out-quart), border-color 0.2s var(--ease-out-quart);
+}
+.chip-press:active {
+  transform: scale(0.93);
+}
+
+/* ─── Gradient border pulse for active cards ─── */
+@keyframes border-shimmer {
+  0%, 100% { border-color: rgba(255, 255, 255, 0.08); }
+  50% { border-color: rgba(255, 255, 255, 0.2); }
+}
+.border-shimmer {
+  animation: border-shimmer 2.5s var(--ease-out-quart) infinite;
+}
+
+/* ─── Smooth checkbox check ─── */
+@keyframes check-draw {
+  from {
+    stroke-dashoffset: 12;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.check-draw path {
+  stroke-dasharray: 12;
+  stroke-dashoffset: 12;
+  animation: check-draw 0.25s var(--ease-out-quart) forwards;
+}
+
+/* ─── Soft tooltip fade-up ─── */
+@keyframes tooltip-up {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+.tooltip-up {
+  animation: tooltip-up 0.2s var(--ease-out-quart) both;
+}
+
 /* ─── Reduced motion — disable everything non-essential ─── */
 @media (prefers-reduced-motion: reduce) {
   *,

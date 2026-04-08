@@ -373,25 +373,25 @@ export default function TestResultsPage() {
                 </div>
               </div>
 
-              <div className="space-y-2 mb-4">
+              <div className="space-y-2 mb-4 stagger-fast">
                 {pulledFlows.map((flow) => {
                   const checked = selectedFlowIds.has(flow.flow_id);
                   return (
                     <button
                       key={flow.flow_id}
                       onClick={() => toggleFlow(flow.flow_id)}
-                      className={`w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl text-left transition-all duration-200 ${
+                      className={`w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl text-left chip-press transition-colors duration-200 ${
                         checked ? 'bg-white/[0.05] border border-white/15' : 'bg-white/[0.02] border border-white/[0.04] hover:border-white/10'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <div
-                          className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
+                          className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors duration-200 ${
                             checked ? 'bg-green-500 border-green-500' : 'border-white/20'
                           }`}
                         >
                           {checked && (
-                            <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+                            <svg width="10" height="8" viewBox="0 0 10 8" fill="none" className="check-draw">
                               <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                             </svg>
                           )}
@@ -447,7 +447,7 @@ export default function TestResultsPage() {
                       <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-[#888] font-semibold">Why</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="stagger-rows">
                     {rawTests.map((t) => {
                       const id = `${t.flow_id}:${t.flow_message_id}`;
                       const why = insights[id] || '';
