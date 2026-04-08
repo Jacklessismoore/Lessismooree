@@ -53,7 +53,12 @@ function round(v: number, d = 2): number {
 
 function extractBlock(text: string, tag: string): string | null {
   const match = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
-  return match ? match[1].trim() : null;
+  if (match) return match[1].trim();
+  // Fallback: if the model didn't use tags, accept the raw text as long as it
+  // looks like a markdown report (has a heading or enough content).
+  const cleaned = text.trim();
+  if (cleaned.length > 200 && /^#/m.test(cleaned)) return cleaned;
+  return null;
 }
 
 interface VariationData {
@@ -275,7 +280,9 @@ ${payloadJson}
     const report = extractBlock(fullText, 'report');
     if (!report) {
       return NextResponse.json(
-        { error: 'AI did not return a <report> block', raw: fullText.slice(0, 1500) },
+        {
+          error: `AI returned no usable report. First 500 chars: ${fullText.slice(0, 500) || '(empty)'}`,
+        },
         { status: 500 }
       );
     }
