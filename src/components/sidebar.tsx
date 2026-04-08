@@ -113,12 +113,31 @@ function SidebarContent({ onNavClick }: { onNavClick?: () => void }) {
                         }
                       }}
                       className={cn(
-                        'flex items-center gap-3 px-5 py-2.5 transition-all duration-200 relative group',
+                        'flex items-center gap-3 px-5 py-2.5 transition-all duration-300 relative group',
                         isActive ? 'text-white' : 'text-[#666] hover:text-white'
                       )}
                     >
-                      {isActive && <div className="absolute right-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-white rounded-l" />}
-                      {isActive && <div className="absolute inset-0 bg-gradient-to-r from-white/[0.04] to-transparent" />}
+                      {/* Right-edge bar — grows from centre */}
+                      <div
+                        className={cn(
+                          'absolute right-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-white rounded-l origin-center transition-transform duration-400 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
+                          isActive ? 'scale-y-100' : 'scale-y-0'
+                        )}
+                      />
+                      {/* Background wash — fades in */}
+                      <div
+                        className={cn(
+                          'absolute inset-0 bg-gradient-to-r from-white/[0.06] via-white/[0.02] to-transparent transition-opacity duration-400 ease-out',
+                          isActive ? 'opacity-100' : 'opacity-0'
+                        )}
+                      />
+                      {/* Soft glow behind active item */}
+                      <div
+                        className={cn(
+                          'absolute right-0 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/20 blur-2xl transition-opacity duration-500 ease-out pointer-events-none',
+                          isActive ? 'opacity-60' : 'opacity-0'
+                        )}
+                      />
                       <span className="text-base relative z-10">{item.icon}</span>
                       <span className="uppercase tracking-wider text-[11px] font-medium relative z-10">{item.label}</span>
                     </Link>
@@ -168,12 +187,28 @@ function SidebarContent({ onNavClick }: { onNavClick?: () => void }) {
                         }
                       }}
                       className={cn(
-                        'flex items-center gap-3 px-5 py-2.5 transition-all duration-200 relative group',
+                        'flex items-center gap-3 px-5 py-2.5 transition-all duration-300 relative group',
                         isActive ? 'text-white' : 'text-[#666] hover:text-white'
                       )}
                     >
-                      {isActive && <div className="absolute right-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-white rounded-l" />}
-                      {isActive && <div className="absolute inset-0 bg-gradient-to-r from-white/[0.04] to-transparent" />}
+                      <div
+                        className={cn(
+                          'absolute right-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-white rounded-l origin-center transition-transform duration-400 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
+                          isActive ? 'scale-y-100' : 'scale-y-0'
+                        )}
+                      />
+                      <div
+                        className={cn(
+                          'absolute inset-0 bg-gradient-to-r from-white/[0.06] via-white/[0.02] to-transparent transition-opacity duration-400 ease-out',
+                          isActive ? 'opacity-100' : 'opacity-0'
+                        )}
+                      />
+                      <div
+                        className={cn(
+                          'absolute right-0 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/20 blur-2xl transition-opacity duration-500 ease-out pointer-events-none',
+                          isActive ? 'opacity-60' : 'opacity-0'
+                        )}
+                      />
                       <span className="text-base relative z-10">{item.icon}</span>
                       <span className="uppercase tracking-wider text-[11px] font-medium relative z-10">{item.label}</span>
                     </Link>

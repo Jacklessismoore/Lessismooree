@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { BrandCard } from '@/components/ui/brand-card';
 import { exportTestResultsDocx, TestResultTest } from '@/lib/export-test-results-docx';
+import { ReportSkeleton, RowListSkeleton } from '@/components/ui/skeleton';
 import toast from 'react-hot-toast';
 
 type Period = '7d' | '14d' | '30d' | '90d' | 'custom';
@@ -351,11 +352,27 @@ export default function TestResultsPage() {
             )}
           </Card>
 
+          {/* Skeleton while pulling flows */}
+          {pulling && pulledFlows === null && (
+            <Card className="p-6 animate-fade">
+              <p className="label-text mb-4">2. Select flows to analyse</p>
+              <RowListSkeleton rows={4} />
+            </Card>
+          )}
+
           {/* Step 2: Select flows */}
           {pulledFlows !== null && pulledFlows.length > 0 && (
             <Card className="p-6 animate-fade">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <p className="label-text">2. Select flows to analyse</p>
+                <p className="label-text flex items-center gap-2">
+                  2. Select flows to analyse
+                  <span
+                    key={`pulled-${pulledFlows.length}`}
+                    className="count-pop inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[9px] font-semibold bg-white/10 text-white"
+                  >
+                    {pulledFlows.length}
+                  </span>
+                </p>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setSelectedFlowIds(new Set(pulledFlows.map((f) => f.flow_id)))}
@@ -419,11 +436,26 @@ export default function TestResultsPage() {
             </Card>
           )}
 
+          {/* Skeleton while analysing */}
+          {analysing && !summary && (
+            <div className="animate-fade">
+              <ReportSkeleton />
+            </div>
+          )}
+
           {/* Step 3: Output */}
           {summary && rawTests && (
             <Card className="p-6 animate-fade">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <p className="label-text">3. Findings</p>
+                <p className="label-text flex items-center gap-2">
+                  3. Findings
+                  <span
+                    key={`tests-${rawTests.length}`}
+                    className="count-pop inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[9px] font-semibold bg-white/10 text-white"
+                  >
+                    {rawTests.length} {rawTests.length === 1 ? 'test' : 'tests'}
+                  </span>
+                </p>
                 <div className="flex items-center gap-2 flex-wrap">
                   <Button variant="secondary" size="sm" onClick={handleCopy}>
                     Copy to clipboard

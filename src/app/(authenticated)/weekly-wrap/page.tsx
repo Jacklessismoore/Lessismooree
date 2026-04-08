@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { BrandCard } from '@/components/ui/brand-card';
+import { ReportSkeleton } from '@/components/ui/skeleton';
 import toast from 'react-hot-toast';
 
 type Period = '7d' | '14d' | '30d' | '90d' | 'custom';
@@ -224,11 +225,20 @@ export default function WeeklyWrapPage() {
             )}
           </Card>
 
+          {/* Skeleton placeholder while generating */}
+          {generating && !report && (
+            <div className="animate-fade">
+              <ReportSkeleton />
+            </div>
+          )}
+
           {/* Output */}
           {report && (
             <Card className="p-6">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <p className="label-text">Generated report</p>
+                <p className="label-text flex items-center gap-2">
+                  <span className="count-pop">Generated report</span>
+                </p>
                 <Button variant="secondary" size="sm" onClick={handleCopy}>
                   Copy to clipboard
                 </Button>
