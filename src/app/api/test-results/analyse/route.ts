@@ -254,6 +254,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Sort tests: group by flow name, then natural-sort by flow message label
+    // within each flow (so "Email #1" < "Email #2" < "Email #10").
+    const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+    tests.sort((a, b) => {
+      const flowCmp = collator.compare(a.flow_name || '', b.flow_name || '');
+      if (flowCmp !== 0) return flowCmp;
+      return collator.compare(a.flow_message_label || '', b.flow_message_label || '');
+    });
+
     // ─── Server-side computed summary — NO hallucination possible ───
     const clearWinners = tests.filter((t) => t.classification === 'clear_winner');
     const noRevenue = tests.filter((t) => t.classification === 'no_revenue');
