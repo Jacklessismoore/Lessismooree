@@ -157,6 +157,55 @@ export async function getFlowMessagesForAction(apiKey: string, actionId: string)
   return klaviyoGet(apiKey, `/flow-actions/${actionId}/flow-messages`);
 }
 
+// Pull every flow-message for a single flow with its subject and preview text.
+// Returns a flat list across all SEND_EMAIL actions so the A/B variations are
+// exposed and can be matched to report rows by name.
+export async function getFlowMessageContents(
+  apiKey: string,
+  flowId: string
+): Promise<Array<{ messageId: string; label: string | null; subject: string; previewText: string }>> {
+  let actionsRes;
+  try {
+    actionsRes = await getFlowActions(apiKey, flowId);
+  } catch {
+    return [];
+  }
+  const actions = (actionsRes?.data || []) as Array<{
+    id: string;
+    attributes?: { action_type?: string };
+  }>;
+  const sendEmailActions = actions.filter((a) => a.attributes?.action_type === 'SEND_EMAIL');
+
+  const out: Array<{ messageId: string; label: string | null; subject: string; previewText: string }> = [];
+  for (const action of sendEmailActions) {
+    let msgRes;
+    try {
+      msgRes = await getFlowMessagesForAction(apiKey, action.id);
+    } catch {
+      continue;
+    }
+    const messages = (msgRes?.data || []) as Array<{
+      id: string;
+      attributes?: {
+        name?: string;
+        channel?: string;
+        content?: { subject?: string; preview_text?: string };
+      };
+    }>;
+    for (const msg of messages) {
+      if (msg.attributes?.channel && msg.attributes.channel !== 'Email') continue;
+      const content = msg.attributes?.content;
+      out.push({
+        messageId: msg.id,
+        label: msg.attributes?.name || null,
+        subject: (content?.subject || '').trim(),
+        previewText: (content?.preview_text || '').trim(),
+      });
+    }
+  }
+  return out;
+}
+
 // High-level helper used by /api/klaviyo/live-flows. Returns a normalized
 // array of live flows with their email subject lines and preview texts.
 export async function getLiveFlowsWithMessages(

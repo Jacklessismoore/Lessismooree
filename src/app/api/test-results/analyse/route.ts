@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase/server';
-import { getMetrics, getFlowReport } from '@/lib/klaviyo';
+import { getMetrics, getFlowReport, getFlowMessageContents } from '@/lib/klaviyo';
 import { TEST_RESULTS_ANALYST_SKILL } from '@/lib/skills/test-results-analyst';
 
 export const maxDuration = 60;
@@ -291,24 +291,65 @@ export async function POST(request: NextRequest) {
         : null,
     };
 
-    // Slim the tests down for the AI prompt — it only needs enough context
-    // to write a one-line "why" per test. We don't need every rate.
-    const slimTests = tests.map((t) => ({
-      id: `${t.flow_id}:${t.flow_message_id}`,
-      flow_name: t.flow_name,
-      flow_message_label: t.flow_message_label,
-      classification: t.classification,
-      winner_variation: t.server_suggested_winner,
-      lift_pct: t.lift_pct,
-      variations: t.variations.map((v) => ({
-        name: v.name,
-        recipients: v.recipients,
-        open_rate_pct: v.open_rate_pct,
-        click_rate_pct: v.click_rate_pct,
-        conversion_rate_pct: v.conversion_rate_pct,
-        revenue: v.revenue,
-      })),
-    }));
+    // Fetch per-variation subject lines + preview text for each selected flow
+    // so the AI can actually compare what was tested and explain the win.
+    const uniqueFlowIds = Array.from(new Set(tests.map((t) => t.flow_id)));
+    const contentResults = await Promise.all(
+      uniqueFlowIds.map((fId) =>
+        getFlowMessageContents(apiKey, fId).catch(() => [])
+      )
+    );
+    const contentByFlowId: Record<
+      string,
+      Array<{ messageId: string; label: string | null; subject: string; previewText: string }>
+    > = {};
+    uniqueFlowIds.forEach((fId, i) => {
+      contentByFlowId[fId] = contentResults[i] || [];
+    });
+
+    // Match each variation in each test to its actual subject/preview by
+    // label. Klaviyo labels variations like "Variation A" / "Variation B",
+    // which should match report.variation_name. Fall back to position.
+    const slimTests = tests.map((t) => {
+      const flowContent = contentByFlowId[t.flow_id] || [];
+      // Try to match by label match on both variation name AND flow message name
+      const matchByLabel = (variationName: string) => {
+        const target = variationName.toLowerCase();
+        return flowContent.find((m) => {
+          const lbl = (m.label || '').toLowerCase();
+          // Match variation within a message label that also contains the message label
+          return (
+            lbl === target ||
+            lbl.includes(target) ||
+            (t.flow_message_label &&
+              lbl.includes(t.flow_message_label.toLowerCase()) &&
+              lbl.includes(target))
+          );
+        });
+      };
+
+      return {
+        id: `${t.flow_id}:${t.flow_message_id}`,
+        flow_name: t.flow_name,
+        flow_message_label: t.flow_message_label,
+        classification: t.classification,
+        winner_variation: t.server_suggested_winner,
+        lift_pct: t.lift_pct,
+        variations: t.variations.map((v) => {
+          const matched = matchByLabel(v.name);
+          return {
+            name: v.name,
+            subject: matched?.subject || null,
+            preview_text: matched?.previewText || null,
+            recipients: v.recipients,
+            open_rate_pct: v.open_rate_pct,
+            click_rate_pct: v.click_rate_pct,
+            conversion_rate_pct: v.conversion_rate_pct,
+            revenue: v.revenue,
+          };
+        }),
+      };
+    });
 
     const payloadJson = JSON.stringify(
       {
@@ -326,22 +367,51 @@ export async function POST(request: NextRequest) {
 Return ONLY a JSON object inside <json>...</json> tags with this exact shape:
 
 {
-  "summary": "ONE short paragraph (2-3 sentences max) describing how many tests ran, how many had winners, and the single strongest result. Use computed_summary numbers verbatim.",
+  "summary": "2-3 sentences max. How many tests ran, how many had winners, strongest lift. Use computed_summary numbers verbatim.",
   "insights": {
-    "<test_id>": "ONE concise sentence explaining why the winner won, or why the test is inconclusive. Max 20 words. No fluff."
+    "<test_id>": "ONE sentence explaining what variable was tested and why the winner beat the loser."
   }
 }
 
-The "insights" keys are the test "id" values from the tests[] array. Every test in tests[] must have an entry.
+=== HOW TO WRITE EACH INSIGHT ===
 
-RULES:
-- Use computed_summary numbers verbatim. NEVER invent numbers.
-- Use the exact flow_name from each test. NEVER rename.
-- For clear_winner tests: explain what drove the lift (higher conv rate / higher click rate / more revenue) in one sentence.
-- For no_revenue tests: say "No revenue from either variation."
-- For insufficient_sample tests: say "Not enough recipients — need X+ to call it" where X is 500.
-- For too_close tests: say "Performance gap under 20% — keep running."
-- No em dashes. No fluff. Just facts.
+Each test has two variations, each with a "subject" and "preview_text" field. Your job for clear_winner tests is to:
+
+1. COMPARE the two variations' subject line + preview text side by side.
+2. IDENTIFY what variable was actually tested. Common variables:
+   - Offer type (e.g. "mystery offer" vs "10% off")
+   - Discount framing (percentage vs dollar amount, e.g. "15% off" vs "$25 off")
+   - Urgency (e.g. "Ends tonight" vs no deadline)
+   - Curiosity vs clarity (e.g. "You're gonna love this" vs "New collection dropped")
+   - Personalization (e.g. first name in subject vs generic)
+   - Length (short vs long subject)
+   - Emoji vs no emoji
+   - Question vs statement
+   - Social proof (e.g. "Loved by 50k+ customers" vs benefit-led)
+3. EXPLAIN the win in one sentence that names the tested variable and shows the subjects in quotes.
+
+Good examples:
+- "Tested mystery offer vs explicit discount — 'Your gift inside' beat '15% off everything' on conversion rate (0.45% vs 0.15%)."
+- "Tested curiosity vs clarity — 'We need to talk' beat 'New drop live now' with 2x the click rate and +$94 revenue."
+- "Tested urgency framing — 'Last chance tonight' beat 'Don't miss out' with a higher conversion rate despite similar opens."
+
+Bad examples (too vague):
+- "Variation A performed better." ❌
+- "Higher conversion rate drove the lift." ❌ (doesn't identify the test variable)
+- "Better subject line won." ❌ (doesn't say HOW it was better)
+
+=== CLASSIFICATION HANDLING ===
+- clear_winner: Follow the rules above. Identify the tested variable by comparing subjects/previews, quote them, explain why the winner won.
+- too_close: "Performance gap under 20% — keep running."
+- no_revenue: "No revenue from either variation."
+- insufficient_sample: "Not enough recipients — need 500+ per variation."
+
+=== HARD RULES ===
+1. Use computed_summary numbers verbatim in the summary. NEVER invent.
+2. When identifying the test variable, ALWAYS reference the actual subject or preview text in quotes.
+3. If subject/preview_text are both null for a variation, say "Can't identify test variable — message content unavailable."
+4. No em dashes in the output. Use "—" sparingly or not at all.
+5. Every test in tests[] must have an entry in insights.
 
 === DATA ===
 \`\`\`json
