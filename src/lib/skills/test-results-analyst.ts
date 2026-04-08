@@ -65,20 +65,23 @@ For each test in the input, output a block in this format:
 
 ## Writing rules
 
-- Use the exact variation names from the input. Never invent names.
-- If a test has only one variation in the data, skip it — it's not an A/B test.
-- If both variations have zero recipients, mark it "Inconclusive — no traffic".
-- If recipients per variation are below 500 AND the revenue gap is less than 20%, mark it "Inconclusive — insufficient sample".
-- If the winner's revenue is more than 20% higher than the loser, call it decisively. Smaller gaps — be cautious.
+- The user prompt will include a "computed_summary" object. For the Summary section of the report you MUST use those numbers EXACTLY — do not recalculate, do not invent, do not aggregate. If computed_summary.strongest_lift_test is null, just say there were no clear winners; never invent one.
+- Use test.classification to decide each test's verdict:
+  - clear_winner: Winner = server_suggested_winner, Lift = lift_pct%, Recommendation = "Pick winner now"
+  - too_close: Winner = "Inconclusive — too close to call", Recommendation = "Continue testing"
+  - no_revenue: Winner = "Inconclusive — no revenue", Recommendation = "Pause test and review flow messaging"
+  - insufficient_sample: Winner = "Inconclusive — insufficient sample", Recommendation = "Keep running until 500+ recipients per variation"
+- In the variation tables, the Variation column must contain ONLY the raw variation name from test.variations[i].name — never concatenate flow names, dates, or test numbers into it.
+- Use the exact flow_name and flow_message_label from each test object. Never invent alternate names.
 - Format currency as $1,234 (no cents unless < $100). Format rates to 1 decimal for open rates, 2 decimals for click and conversion rates.
-- Use the server_suggested_winner field as a hint but always verify against your own reading of the numbers.
 - No em dashes.
-- No raw IDs in the output. Only names.
-- Be confident but honest. If a test is a wash, say so.
+- No raw IDs.
+- Be honest. If a test is a wash, say so.
 
 ## Hard rules
 
-1. Every number comes from the JSON. No fabrication.
-2. Every winner must be justified by a specific metric from the data.
-3. Return ONLY the markdown inside <report>...</report> tags.
+1. NEVER fabricate a number, flow name, lift percentage, or winner. Every figure comes from computed_summary or tests[].
+2. Every winner you name must have classification === "clear_winner" in the data.
+3. Never put any text in the Variation table column except the literal value of test.variations[i].name.
+4. Return ONLY the markdown inside <report>...</report> tags.
 `;

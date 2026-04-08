@@ -209,24 +209,55 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Filter to real tests (>=2 variations) and pick a suggested winner per test
-    const tests: TestData[] = [];
+    // Filter to real tests (>=2 variations), pick a winner, and classify each one.
+    interface ClassifiedTest extends TestData {
+      classification: 'clear_winner' | 'no_revenue' | 'insufficient_sample' | 'too_close';
+      lift_pct: number | null;
+      winner_revenue: number;
+      runner_up_revenue: number;
+    }
+    const tests: ClassifiedTest[] = [];
     for (const t of Object.values(testMap)) {
       if (t.variations.length < 2) continue;
-      // Winner = highest revenue; fall back to highest conversion rate if all zero
       const sortedByRevenue = [...t.variations].sort((a, b) => b.revenue - a.revenue);
+      const top = sortedByRevenue[0];
+      const second = sortedByRevenue[1];
+      const totalRecipients = t.variations.reduce((s, v) => s + v.recipients, 0);
+      const totalRevenue = t.variations.reduce((s, v) => s + v.revenue, 0);
+
       let winner: string | null = null;
-      if (sortedByRevenue[0].revenue > 0 && sortedByRevenue[0].revenue > sortedByRevenue[1].revenue) {
-        winner = sortedByRevenue[0].name;
+      let liftPct: number | null = null;
+      let classification: ClassifiedTest['classification'];
+
+      if (totalRevenue === 0) {
+        classification = 'no_revenue';
+      } else if (totalRecipients < 500) {
+        classification = 'insufficient_sample';
+        // still suggest the leader as a hint
+        if (top.revenue > second.revenue) winner = top.name;
+      } else if (top.revenue === 0 || second.revenue === 0) {
+        winner = top.name;
+        liftPct = top.revenue > 0 ? 100 : 0;
+        classification = 'clear_winner';
       } else {
-        // Tiebreak by conversion rate
-        const sortedByConv = [...t.variations].sort((a, b) => b.conversion_rate_pct - a.conversion_rate_pct);
-        if (sortedByConv[0].conversion_rate_pct > sortedByConv[1].conversion_rate_pct) {
-          winner = sortedByConv[0].name;
+        const lift = ((top.revenue - second.revenue) / second.revenue) * 100;
+        if (lift >= 20) {
+          winner = top.name;
+          liftPct = round(lift, 1);
+          classification = 'clear_winner';
+        } else {
+          classification = 'too_close';
         }
       }
-      t.server_suggested_winner = winner;
-      tests.push(t);
+
+      tests.push({
+        ...t,
+        server_suggested_winner: winner,
+        lift_pct: liftPct,
+        winner_revenue: top.revenue,
+        runner_up_revenue: second.revenue,
+        classification,
+      });
     }
 
     if (tests.length === 0) {
@@ -236,28 +267,84 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Build payload for AI
+    // ─── Server-side computed summary — NO hallucination possible ───
+    const clearWinners = tests.filter((t) => t.classification === 'clear_winner');
+    const noRevenue = tests.filter((t) => t.classification === 'no_revenue');
+    const insufficientSample = tests.filter((t) => t.classification === 'insufficient_sample');
+    const tooClose = tests.filter((t) => t.classification === 'too_close');
+
+    const strongestLift = clearWinners
+      .filter((t) => t.lift_pct != null)
+      .sort((a, b) => (b.lift_pct || 0) - (a.lift_pct || 0))[0] || null;
+
+    const totalRevenueAcrossTests = tests.reduce(
+      (s, t) => s + t.variations.reduce((sv, v) => sv + v.revenue, 0),
+      0
+    );
+
+    const uniqueFlows = new Set(tests.map((t) => t.flow_name));
+
+    const computedSummary = {
+      total_tests: tests.length,
+      flows_tested: uniqueFlows.size,
+      clear_winners: clearWinners.length,
+      too_close_to_call: tooClose.length,
+      no_revenue: noRevenue.length,
+      insufficient_sample: insufficientSample.length,
+      total_revenue_across_all_variations: round(totalRevenueAcrossTests, 2),
+      strongest_lift_test: strongestLift
+        ? {
+            flow_name: strongestLift.flow_name,
+            flow_message_label: strongestLift.flow_message_label,
+            winner_variation: strongestLift.server_suggested_winner,
+            lift_pct: strongestLift.lift_pct,
+            winner_revenue: strongestLift.winner_revenue,
+            runner_up_revenue: strongestLift.runner_up_revenue,
+          }
+        : null,
+    };
+
     const payloadJson = JSON.stringify(
       {
         brand: { name: brand.name, category: brand.category || 'unknown', voice: brand.voice || 'unknown' },
         period_label: periodLabel,
+        computed_summary: computedSummary,
         tests,
       },
       null,
       2
     );
 
-    const userPrompt = `Analyse these A/B test results for ${brand.name} covering ${periodLabel}.
+    const userPrompt = `Write the A/B test results report for ${brand.name} covering ${periodLabel}.
+
+=== CRITICAL: USE THE COMPUTED SUMMARY VERBATIM ===
+The "computed_summary" object below has already been calculated server-side from the raw test data. For the Summary section of your report, you MUST use ONLY the numbers from computed_summary. DO NOT invent or estimate. The numbers there are:
+- total_tests: how many tests ran
+- clear_winners: tests with a decisive winner
+- too_close_to_call: tests where the lift was <20%
+- no_revenue: tests where neither variation generated revenue
+- insufficient_sample: tests with <500 total recipients
+- strongest_lift_test: the single best-performing test with its flow name, variation name, lift %, and the exact revenue numbers
+
+For example, if computed_summary.strongest_lift_test.flow_name is "LIM | Welcome Flow" and .lift_pct is 33.9, your Summary MUST say "LIM | Welcome Flow" and "+33.9% lift" — never invent a different flow name or a different percentage.
+
+=== FOR EACH TEST IN tests[] ===
+Output a section per test. For the variation table, put the EXACT variation name from test.variations[i].name in the Variation column — nothing more, nothing less. Never concatenate dates, flow names, or test numbers into that cell.
+
+Use the classification field to decide the Winner/Recommendation:
+- clear_winner: Winner = server_suggested_winner, Lift = lift_pct%, Recommendation = "Pick winner now"
+- too_close: Winner = "Inconclusive — too close to call", Recommendation = "Continue testing"
+- no_revenue: Winner = "Inconclusive — no revenue", Recommendation = "Pause test and review flow messaging"
+- insufficient_sample: Winner = "Inconclusive — insufficient sample", Recommendation = "Keep running until 500+ recipients per variation"
 
 === HARD RULES ===
-1. Every number comes from the JSON below. Do NOT fabricate.
-2. Use the exact variation names from the data. Never invent names.
-3. No raw IDs in the output. Use flow names only.
-4. Use server_suggested_winner as a hint but verify it against the numbers.
-5. Be honest about inconclusive tests.
-6. Return ONLY the markdown inside <report>...</report> tags.
+1. NEVER fabricate numbers. Every figure must come from computed_summary or tests[].
+2. NEVER invent a flow name. Use test.flow_name exactly.
+3. NEVER put anything except the raw variation name in the Variation column.
+4. NEVER claim a flow is a winner unless its classification in tests[] is "clear_winner".
+5. Return ONLY the markdown inside <report>...</report> tags.
 
-=== TEST DATA ===
+=== DATA ===
 \`\`\`json
 ${payloadJson}
 \`\`\`
