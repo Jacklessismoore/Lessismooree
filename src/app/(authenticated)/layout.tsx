@@ -183,6 +183,7 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
       {/* Dynamic background layers */}
       <div className="bg-mesh" />
       <div className="bg-haze" />
+      <div className="aurora" />
       <div className="bg-dots" />
       <div className="bg-noise" />
 
@@ -196,7 +197,7 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
         {timeSinceScan && (
           <div className="fixed bottom-3 right-3 sm:bottom-4 sm:right-4 z-30">
             <div className="flex items-center gap-1.5 bg-black/70 backdrop-blur-sm border border-white/[0.04] rounded-lg px-2.5 py-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-500/60" />
+              <div className="w-1.5 h-1.5 rounded-full bg-green-500/80 glow-dot" />
               <span className="text-[8px] text-[#555]">
                 Slack scanned {timeSinceScan}{nextScanIn ? ` · next in ${nextScanIn}` : ''}
               </span>
