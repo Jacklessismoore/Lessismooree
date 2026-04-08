@@ -52,7 +52,7 @@ export function Card({ children, className, hoverable, padding = 'md', onClick, 
         'glass-card rounded-2xl transition-all duration-300 ease-out',
         paddings[padding],
         hoverable && [
-          'cursor-pointer card-lift card-sheen spotlight card-tilt',
+          'cursor-pointer card-lift card-sheen spotlight card-tilt conic-border glow-trail',
           'hover:border-white/10 hover:bg-white/[0.04]',
           'active:scale-[0.99] active:duration-100',
         ].join(' '),

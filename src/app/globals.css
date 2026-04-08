@@ -1000,6 +1000,90 @@ html {
   animation: breathe 3.5s ease-in-out infinite;
 }
 
+/* ─── Conic gradient border — rotating shine on hover ─── */
+@property --conic-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes conic-spin {
+  to {
+    --conic-angle: 360deg;
+  }
+}
+
+.conic-border {
+  position: relative;
+  isolation: isolate;
+}
+.conic-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--conic-angle),
+    transparent 0deg,
+    transparent 120deg,
+    rgba(255, 255, 255, 0.5) 180deg,
+    rgba(255, 255, 255, 0.9) 200deg,
+    rgba(255, 255, 255, 0.5) 220deg,
+    transparent 280deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.4s var(--ease-out-quart);
+  pointer-events: none;
+  z-index: 2;
+}
+.conic-border:hover::before {
+  opacity: 1;
+  animation: conic-spin 3s linear infinite;
+}
+
+/* Fallback for browsers without @property support — static gradient */
+@supports not (background: conic-gradient(from 0deg, red, blue)) {
+  .conic-border::before {
+    background: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.1),
+      rgba(255, 255, 255, 0.4),
+      rgba(255, 255, 255, 0.1)
+    );
+  }
+}
+
+/* ─── Glow trail — soft white glow that follows the card on hover ─── */
+.glow-trail {
+  position: relative;
+}
+.glow-trail::after {
+  content: '';
+  position: absolute;
+  inset: -20px;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle at var(--mx, 50%) var(--my, 50%),
+    rgba(255, 255, 255, 0.08),
+    transparent 40%
+  );
+  opacity: 0;
+  transition: opacity 0.5s var(--ease-out-quart);
+  pointer-events: none;
+  z-index: -1;
+  filter: blur(12px);
+}
+.glow-trail:hover::after {
+  opacity: 1;
+}
+
 /* ─── Skeleton placeholder — subtle shimmer for loading states ─── */
 @keyframes skeleton-pulse {
   0%, 100% {
