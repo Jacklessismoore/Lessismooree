@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useMemo, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useApp } from '@/lib/app-context';
 import { useAuth } from '@/lib/auth-context';
 import { Brand, FlowBriefEmail } from '@/lib/types';
@@ -14,6 +14,12 @@ import { createFlowBrief } from '@/lib/db';
 import toast from 'react-hot-toast';
 
 type Step = 'brand' | 'details' | 'review';
+
+function todayPlus(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 const FLOW_TYPE_OPTIONS = [
   { value: 'welcome', label: 'Welcome Flow' },
@@ -33,6 +39,8 @@ export default function NewFlowBriefPage() {
   const { brands, managers, selectedPod } = useApp();
   const { user } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefilledBrandId = searchParams.get('brandId');
 
   const [step, setStep] = useState<Step>('brand');
   const [selectedBrand, setSelectedBrand] = useState<Brand | null>(null);
@@ -41,6 +49,9 @@ export default function NewFlowBriefPage() {
   const [flowName, setFlowName] = useState('');
   const [emailCount, setEmailCount] = useState(4);
   const [triggerDescription, setTriggerDescription] = useState('');
+  const [purpose, setPurpose] = useState('');
+  const [summary, setSummary] = useState('');
+  const [dueDate, setDueDate] = useState<string>(todayPlus(7));
   const [sourceNotes, setSourceNotes] = useState('');
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [parsingFile, setParsingFile] = useState(false);
@@ -49,6 +60,16 @@ export default function NewFlowBriefPage() {
   const [generatedEmails, setGeneratedEmails] = useState<FlowBriefEmail[] | null>(null);
   const [resolvedTrigger, setResolvedTrigger] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Pre-select a brand if we arrived from the Create page
+  useEffect(() => {
+    if (!prefilledBrandId || selectedBrand) return;
+    const b = brands.find((x) => x.id === prefilledBrandId);
+    if (b) {
+      setSelectedBrand(b);
+      setStep('details');
+    }
+  }, [prefilledBrandId, brands, selectedBrand]);
 
   const podBrands = useMemo(
     () => (selectedPod ? brands.filter((b) => b.pod_id === selectedPod.id) : brands),
@@ -122,6 +143,8 @@ export default function NewFlowBriefPage() {
           flowName: flowName.trim(),
           emailCount,
           triggerDescription: triggerDescription.trim(),
+          purpose: purpose.trim(),
+          summary: summary.trim(),
           sourceNotes: sourceNotes.trim(),
         }),
       });
@@ -147,6 +170,9 @@ export default function NewFlowBriefPage() {
         name: flowName.trim(),
         flow_type: flowType,
         trigger_description: resolvedTrigger || triggerDescription,
+        purpose: purpose.trim(),
+        summary: summary.trim(),
+        due_date: dueDate || null,
         source_notes: sourceNotes,
         emails: generatedEmails,
         status: 'draft',
@@ -293,7 +319,7 @@ export default function NewFlowBriefPage() {
 
             <div>
               <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
-                What triggers the flow (optional)
+                What triggers the flow
               </label>
               <input
                 type="text"
@@ -301,6 +327,44 @@ export default function NewFlowBriefPage() {
                 onChange={(e) => setTriggerDescription(e.target.value)}
                 placeholder="e.g. Added to Newsletter list · Checkout Started · Placed Order"
                 className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder:text-[#444]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
+                Purpose of the flow
+              </label>
+              <input
+                type="text"
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value)}
+                placeholder="e.g. Convert cold subscribers into first-time buyers with a warm onboarding sequence"
+                className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder:text-[#444]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
+                Summary (2-3 sentences)
+              </label>
+              <textarea
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
+                placeholder="Short summary of what this flow is about, who it targets, and the strategy behind it."
+                rows={3}
+                className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder:text-[#444] resize-y min-h-[80px]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
+                Due date (when the build should land in the design queue)
+              </label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="input-polish w-full max-w-xs bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white"
               />
             </div>
 

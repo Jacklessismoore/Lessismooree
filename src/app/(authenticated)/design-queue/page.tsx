@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useApp } from '@/lib/app-context';
-import { getBriefHistory, updateBriefHistoryStatus } from '@/lib/db';
-import { BriefHistory, Brand, Designer } from '@/lib/types';
+import { getBriefHistory, updateBriefHistoryStatus, getFlowBriefs } from '@/lib/db';
+import { BriefHistory, Brand, FlowBrief } from '@/lib/types';
 import { PageHeader } from '@/components/ui/page-header';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -171,6 +171,7 @@ function BriefCard({ brief, brand, onStatusChange }: {
 export default function DesignerPriorityPage() {
   const { selectedPod, designers, podBrands } = useApp();
   const [allBriefs, setAllBriefs] = useState<BriefHistory[]>([]);
+  const [allFlowBriefs, setAllFlowBriefs] = useState<FlowBrief[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>('designers');
   const [selectedDesigner, setSelectedDesigner] = useState<DesignerInfo | null>(null);
@@ -178,8 +179,9 @@ export default function DesignerPriorityPage() {
 
   const loadBriefs = useCallback(async () => {
     try {
-      const briefs = await getBriefHistory();
+      const [briefs, flows] = await Promise.all([getBriefHistory(), getFlowBriefs()]);
       setAllBriefs(briefs);
+      setAllFlowBriefs(flows);
     } catch (e) {
       console.error('Failed to load briefs:', e);
     }
@@ -244,6 +246,35 @@ export default function DesignerPriorityPage() {
       if (dueInfo.urgency === 'asap') { info.dueTodayCount++; } // ASAP counts as due today
       if (dueInfo.urgency === 'today') info.dueTodayCount++;
       if (dueInfo.urgency === 'overdue') { info.overdueCount++; info.dueTodayCount++; }
+    }
+
+    // Also roll up flow briefs (one entry per flow, not per email)
+    for (const fb of allFlowBriefs) {
+      if (!podBrandIds.has(fb.brand_id)) continue;
+      if (fb.status !== 'draft' && fb.status !== 'approved' && fb.status !== 'building') continue;
+      const brand = podBrands.find((b) => b.id === fb.brand_id);
+      if (!brand) continue;
+      const designerId = brand.designer_id || 'unassigned';
+      if (!map.has(designerId)) {
+        map.set(designerId, {
+          id: designerId,
+          name: 'Unknown',
+          campaignCount: 0,
+          flowCount: 0,
+          totalCount: 0,
+          dueTodayCount: 0,
+          overdueCount: 0,
+        });
+      }
+      const info = map.get(designerId)!;
+      info.totalCount += 1;
+      info.flowCount += 1;
+      const dueInfo = getDesignDueInfo(fb.due_date, 'calendar');
+      if (dueInfo.urgency === 'today') info.dueTodayCount += 1;
+      if (dueInfo.urgency === 'overdue') {
+        info.overdueCount += 1;
+        info.dueTodayCount += 1;
+      }
     }
 
     return Array.from(map.values())
@@ -387,8 +418,30 @@ export default function DesignerPriorityPage() {
   };
 
   const campaignBriefs = designerBriefs.filter(b => !b.type?.includes('flow')).sort(sortByUrgency);
-  const flowBriefs = designerBriefs.filter(b => b.type?.includes('flow')).sort(sortByUrgency);
-  const activeBriefs = activeTab === 'campaigns' ? campaignBriefs : flowBriefs;
+
+  // Campaign-style "flow" briefs from the old single-email flow form —
+  // kept for backwards compatibility but hidden from the flow tab since they
+  // are superseded by the new flow builder.
+  const legacyFlowBriefs = designerBriefs.filter(b => b.type?.includes('flow')).sort(sortByUrgency);
+  void legacyFlowBriefs;
+
+  // New flow briefs (from the Flow Brief builder) — shown as one card per flow.
+  const flowBriefsInQueue = allFlowBriefs
+    .filter((fb) => podBrandIds.has(fb.brand_id))
+    .filter((fb) => fb.status === 'draft' || fb.status === 'approved' || fb.status === 'building')
+    .filter((fb) => {
+      const brand = podBrands.find((b) => b.id === fb.brand_id);
+      if (!brand) return false;
+      const designerId = brand.designer_id || 'unassigned';
+      return designerId === selectedDesigner?.id;
+    })
+    .sort((a, b) => {
+      const aDue = a.due_date ? new Date(a.due_date).getTime() : Infinity;
+      const bDue = b.due_date ? new Date(b.due_date).getTime() : Infinity;
+      return aDue - bDue;
+    });
+
+  const activeBriefs = activeTab === 'campaigns' ? campaignBriefs : [];
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -424,32 +477,100 @@ export default function DesignerPriorityPage() {
           }`}
         >
           Flows
-          <span className="ml-1.5 opacity-60">{flowBriefs.length}</span>
+          <span className="ml-1.5 opacity-60">{flowBriefsInQueue.length}</span>
         </button>
       </div>
 
-      {/* Brief list */}
-      {activeBriefs.length === 0 ? (
-        <div className="text-center py-12">
-          <p className="text-[#555] text-sm">
-            No {activeTab === 'campaigns' ? 'campaign' : 'flow'} briefs in queue for {selectedDesigner?.name}.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {activeBriefs.map(brief => {
-            const brand = podBrands.find(b => b.id === brief.brand_id);
-            if (!brand) return null;
-            return (
-              <BriefCard
-                key={brief.id}
-                brief={brief}
-                brand={brand}
-                onStatusChange={handleStatusChange}
-              />
-            );
-          })}
-        </div>
+      {/* Campaign tab — existing brief list */}
+      {activeTab === 'campaigns' && (
+        activeBriefs.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-[#555] text-sm">
+              No campaign briefs in queue for {selectedDesigner?.name}.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {activeBriefs.map(brief => {
+              const brand = podBrands.find(b => b.id === brief.brand_id);
+              if (!brand) return null;
+              return (
+                <BriefCard
+                  key={brief.id}
+                  brief={brief}
+                  brand={brand}
+                  onStatusChange={handleStatusChange}
+                />
+              );
+            })}
+          </div>
+        )
+      )}
+
+      {/* Flow tab — one entry per flow brief (from the flow builder) */}
+      {activeTab === 'flows' && (
+        flowBriefsInQueue.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-[#555] text-sm">
+              No flow briefs in queue for {selectedDesigner?.name}.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {flowBriefsInQueue.map((fb) => {
+              const brand = podBrands.find((b) => b.id === fb.brand_id);
+              if (!brand) return null;
+              const dueInfo = getDesignDueInfo(fb.due_date, 'calendar');
+              return (
+                <Card
+                  key={fb.id}
+                  padding="sm"
+                  className="border-l-2"
+                  style={{ borderLeftColor: dueInfo.color }}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                        <span className="text-[11px] font-medium text-white truncate">{fb.name}</span>
+                        <span className="text-[9px] text-[#555] bg-white/[0.03] px-1.5 py-0.5 rounded uppercase tracking-wider">
+                          Flow · {fb.emails.length} email{fb.emails.length === 1 ? '' : 's'}
+                        </span>
+                        <span
+                          className="text-[9px] font-semibold px-2 py-0.5 rounded uppercase tracking-wider"
+                          style={{ color: dueInfo.color, backgroundColor: `${dueInfo.color}15` }}
+                        >
+                          {dueInfo.label}
+                        </span>
+                        <span
+                          className="text-[9px] font-semibold px-2 py-0.5 rounded uppercase tracking-wider"
+                          style={{ color: '#888', background: 'rgba(255,255,255,0.04)' }}
+                        >
+                          {fb.status}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-[#555]">
+                        <span>{brand.name}</span>
+                        <span>·</span>
+                        <span>{fb.flow_type.replace(/_/g, ' ')}</span>
+                        {fb.due_date && (
+                          <>
+                            <span>·</span>
+                            <span>Due {formatDate(fb.due_date)}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <Link href={`/flow-briefs/${fb.id}`}>
+                      <Button variant="ghost" size="sm" className="text-[9px] min-h-0 px-2 py-1">
+                        Open
+                      </Button>
+                    </Link>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )
       )}
 
     </div>

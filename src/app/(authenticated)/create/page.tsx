@@ -408,9 +408,16 @@ export default function CreatePage() {
       strategy: 'Strategy',
       testing: 'Testing',
     };
+    // Hide the old text-based flow brief type from the Create UI. Flows are
+    // now planned as a full sequence via the Flow Brief wizard, with an SMS
+    // option alongside it. The underlying BriefType values stay in place so
+    // any existing data keeps working.
+    const HIDDEN_ON_CREATE: BriefType[] = ['flow_plain_text'];
     const typeGroups = categoryOrder.map(cat => ({
       label: categoryLabels[cat],
-      types: BRIEF_TYPES.filter(t => t.category === cat),
+      types: BRIEF_TYPES
+        .filter(t => t.category === cat)
+        .filter(t => !HIDDEN_ON_CREATE.includes(t.value)),
     })).filter(g => g.types.length > 0);
 
     let animIndex = 0;
@@ -441,22 +448,38 @@ export default function CreatePage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 {group.types.map(type => {
                   const idx = animIndex++;
+                  // The 'Build Flow' card jumps into the dedicated flow brief
+                  // wizard (which plans the whole sequence), not the single
+                  // email form we used to show.
+                  const isBuildFlow = type.value === 'flow';
+                  const label = isBuildFlow ? 'Build Flow' : type.label;
+                  const description = isBuildFlow
+                    ? 'Plan a full multi-email Klaviyo flow with AI'
+                    : type.description;
                   return (
                     <Card
                       key={type.value}
                       hoverable
                       padding="sm"
-                      onClick={() => setSelectedType(type.value)}
+                      onClick={() => {
+                        if (isBuildFlow) {
+                          router.push(
+                            `/flow-briefs/new?brandId=${encodeURIComponent(selectedClient.id)}`
+                          );
+                          return;
+                        }
+                        setSelectedType(type.value);
+                      }}
                       className="animate-fade-in"
                       style={{ animationDelay: `${idx * 40}ms` } as React.CSSProperties}
                     >
                       <div className="flex items-center gap-3.5">
                         <div className="w-10 h-10 rounded-lg bg-white/[0.03] border border-white/[0.04] flex items-center justify-center flex-shrink-0">
-                          <span className="text-xl">{type.icon}</span>
+                          <span className="text-xl">{isBuildFlow ? '🔀' : type.icon}</span>
                         </div>
                         <div className="min-w-0">
-                          <p className="text-[11px] font-semibold text-white uppercase tracking-wider">{type.label}</p>
-                          <p className="text-[10px] text-[#444] mt-0.5 truncate">{type.description}</p>
+                          <p className="text-[11px] font-semibold text-white uppercase tracking-wider">{label}</p>
+                          <p className="text-[10px] text-[#444] mt-0.5 truncate">{description}</p>
                         </div>
                       </div>
                     </Card>

@@ -205,7 +205,9 @@ export interface BriefHistory {
 }
 
 // ─── Flow Briefs ───
-// AI-generated plan for a Klaviyo flow. Each brief has N emails.
+// AI-generated plan for a Klaviyo flow. Each brief has N emails. Every email
+// gets rendered as a full Campaign Brief (same markdown output) so designers
+// see identical formatting whether the brief comes from Campaigns or Flows.
 export interface FlowBriefEmail {
   position: number; // 1-based
   label: string; // e.g. "Email 1"
@@ -213,7 +215,10 @@ export interface FlowBriefEmail {
   goal: string; // one-sentence angle
   subject: string;
   preview_text: string;
-  body_outline: string[]; // section-level outline
+  // The full campaign-brief style markdown for this email, generated per-email
+  // by the server (same shape as a regular campaign brief). Optional because
+  // older flow briefs in the DB don't have it.
+  brief_markdown?: string;
 }
 
 export interface FlowBrief {
@@ -224,6 +229,9 @@ export interface FlowBrief {
   flow_type: string; // welcome, abandoned_cart, winback, etc.
   trigger_description: string;
   source_notes: string; // the original prompt/notes the user provided
+  purpose: string; // short one-liner describing what this flow is for
+  summary: string; // 2-3 sentence summary of strategy
+  due_date: string | null; // ISO date for design queue scheduling
   emails: FlowBriefEmail[];
   status: 'draft' | 'approved' | 'building' | 'live';
   created_at: string;
