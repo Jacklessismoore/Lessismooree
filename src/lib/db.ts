@@ -1,5 +1,5 @@
 import { createClient } from './supabase/client';
-import { Pod, Manager, Designer, KlaviyoTech, Scheduler, Brand, Strategy, CalendarItem, BriefHistory, BrandProduct, EmailStatus, InboxItem, SOPCompletion, EmailReference, FlowBrief } from './types';
+import { Pod, Manager, Designer, KlaviyoTech, Scheduler, Brand, Strategy, CalendarItem, BriefHistory, BrandProduct, EmailStatus, SOPCompletion, EmailReference, FlowBrief } from './types';
 
 function supabase() {
   const client = createClient();
@@ -407,52 +407,6 @@ export async function updateBriefSLPT(id: string, subjectLine: string, previewTe
     .update({ subject_line: subjectLine, preview_text: previewText })
     .eq('id', id);
   if (error) throw error;
-}
-
-// Inbox Items
-export async function getInboxItems(options?: { brandId?: string; resolved?: boolean }): Promise<InboxItem[]> {
-  let query = supabase()
-    .from('inbox_items')
-    .select('*, brand:brands(name, slug, pod_id, manager_id, manager:managers(name))')
-    .order('created_at', { ascending: false });
-
-  if (options?.brandId) query = query.eq('brand_id', options.brandId);
-  if (options?.resolved !== undefined) query = query.eq('is_resolved', options.resolved);
-
-  const { data, error } = await query;
-  if (error) throw error;
-  return data ?? [];
-}
-
-export async function resolveInboxItem(id: string, resolvedBy?: string): Promise<void> {
-  const { error } = await supabase()
-    .from('inbox_items')
-    .update({ is_resolved: true, resolved_by: resolvedBy || null, resolved_at: new Date().toISOString() })
-    .eq('id', id);
-  if (error) throw error;
-}
-
-export async function unresolveInboxItem(id: string): Promise<void> {
-  const { error } = await supabase()
-    .from('inbox_items')
-    .update({ is_resolved: false, resolved_by: null, resolved_at: null })
-    .eq('id', id);
-  if (error) throw error;
-}
-
-export async function deleteInboxItem(id: string): Promise<void> {
-  const { error } = await supabase().from('inbox_items').delete().eq('id', id);
-  if (error) throw error;
-}
-
-export async function getBrandsWithSlack(): Promise<Brand[]> {
-  const { data, error } = await supabase()
-    .from('brands')
-    .select('*, manager:managers(*)')
-    .neq('slack_channel_id', '')
-    .order('name');
-  if (error) throw error;
-  return data ?? [];
 }
 
 // ─── Flow Briefs ───

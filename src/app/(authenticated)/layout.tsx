@@ -1,21 +1,15 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { Sidebar } from '@/components/sidebar';
-import toast from 'react-hot-toast';
-
-const SCAN_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
 export default function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
   const { loading, canAccess, isPendingRole, signOut } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [lastScanTime, setLastScanTime] = useState<Date | null>(null);
-  const [timeSinceScan, setTimeSinceScan] = useState('');
-  const isFirstScan = useRef(true);
 
   useEffect(() => {
     // Load initial state
@@ -31,78 +25,6 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
     return () => window.removeEventListener('sidebar-toggle', handler);
   }, []);
 
-  // Global Slack scan
-  const runScan = useCallback(async () => {
-    try {
-      const res = await fetch('/api/slack/scan-all', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setLastScanTime(new Date());
-        // Save to localStorage so it persists across pages
-        localStorage.setItem('lim-last-slack-scan', new Date().toISOString());
-
-        // Always show toast for every scan
-        if (data.totalNewItems > 0) {
-          toast.success(`${data.totalNewItems} new Slack message${data.totalNewItems !== 1 ? 's' : ''}`);
-        } else {
-          toast(`Slack scanned — no new messages`, { icon: '✅', duration: 2000 });
-        }
-        isFirstScan.current = false;
-      }
-    } catch {
-      // Silently fail — scan is non-critical
-    }
-  }, []);
-
-  // Run scan on mount and every 10 minutes
-  useEffect(() => {
-    if (loading) return;
-
-    // Check if we scanned recently (within last 2 minutes) from localStorage
-    const lastSaved = localStorage.getItem('lim-last-slack-scan');
-    if (lastSaved) {
-      const lastDate = new Date(lastSaved);
-      const timeSince = Date.now() - lastDate.getTime();
-      setLastScanTime(lastDate);
-      if (timeSince < 2 * 60 * 1000) {
-        // Scanned less than 2 min ago, skip initial scan
-        isFirstScan.current = false;
-      } else {
-        runScan();
-      }
-    } else {
-      runScan();
-    }
-
-    const interval = setInterval(runScan, SCAN_INTERVAL);
-    return () => clearInterval(interval);
-  }, [loading, runScan]);
-
-  // Update "time since scan" display every 15 seconds
-  const [nextScanIn, setNextScanIn] = useState('');
-  useEffect(() => {
-    const update = () => {
-      if (!lastScanTime) {
-        setTimeSinceScan('');
-        setNextScanIn('');
-        return;
-      }
-      const diff = Math.floor((Date.now() - lastScanTime.getTime()) / 1000);
-      if (diff < 60) setTimeSinceScan('just now');
-      else if (diff < 3600) setTimeSinceScan(`${Math.floor(diff / 60)}m ago`);
-      else setTimeSinceScan(`${Math.floor(diff / 3600)}h ago`);
-
-      // Next scan countdown
-      const remaining = Math.max(0, Math.floor((SCAN_INTERVAL - (Date.now() - lastScanTime.getTime())) / 1000));
-      if (remaining <= 0) setNextScanIn('now');
-      else if (remaining < 60) setNextScanIn(`${remaining}s`);
-      else setNextScanIn(`${Math.ceil(remaining / 60)}m`);
-    };
-    update();
-    const interval = setInterval(update, 15000);
-    return () => clearInterval(interval);
-  }, [lastScanTime]);
-
   // Role-based page access guard
   useEffect(() => {
     if (loading || !pathname) return;
@@ -111,13 +33,6 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
       router.replace('/');
     }
   }, [pathname, loading, canAccess, router]);
-
-  // Expose scan function globally so inbox page can trigger it
-  useEffect(() => {
-    const handler = () => { runScan(); };
-    window.addEventListener('trigger-slack-scan', handler);
-    return () => window.removeEventListener('trigger-slack-scan', handler);
-  }, [runScan]);
 
   if (loading) {
     return (
@@ -182,18 +97,6 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
           sidebarCollapsed ? 'lg:ml-[60px]' : 'lg:ml-[230px]'
         }`}
       >
-        {/* Global Slack scan indicator — bottom right to avoid clipping with page buttons */}
-        {timeSinceScan && (
-          <div className="fixed bottom-3 right-3 sm:bottom-4 sm:right-4 z-30">
-            <div className="flex items-center gap-1.5 bg-black/70 backdrop-blur-sm border border-white/[0.04] rounded-lg px-2.5 py-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-500/80 glow-dot" />
-              <span className="text-[8px] text-[#555]">
-                Slack scanned {timeSinceScan}{nextScanIn ? ` · next in ${nextScanIn}` : ''}
-              </span>
-            </div>
-          </div>
-        )}
-
         <div key={pathname} className="route-fade">
           {children}
         </div>

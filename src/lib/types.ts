@@ -143,7 +143,6 @@ export interface Brand {
   website: string;
   instagram: string;
   klaviyo_api_key: string;
-  slack_channel_id: string;
   designer_id: string | null;
   founder: string | null;
   location: string;
@@ -279,28 +278,3 @@ export interface AnalysisResult {
   products: string[];
 }
 
-export type InboxActionType =
-  | 'needs_reply'
-  | 'needs_brief'
-  | 'feedback'
-  | 'urgent'
-  | 'fyi';
-
-export interface InboxItem {
-  id: string;
-  brand_id: string;
-  slack_channel_id: string;
-  slack_message_ts: string;
-  slack_thread_ts: string | null;
-  slack_user_name: string;
-  slack_user_avatar: string | null;
-  message_text: string;
-  action_type: InboxActionType;
-  action_summary: string;
-  is_resolved: boolean;
-  resolved_by: string | null;
-  resolved_at: string | null;
-  created_at: string;
-  // Joined
-  brand?: Brand;
-}

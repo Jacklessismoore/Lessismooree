@@ -51,7 +51,7 @@ export const NAV_SECTIONS = [
     label: 'Daily',
     items: [
       { label: 'SOP', href: '/sop', icon: '📋' },
-      { label: 'Inbox', href: '/inbox', icon: '📥' },
+      { label: 'Message Request', href: '/message-request', icon: '📥' },
     ],
   },
   {

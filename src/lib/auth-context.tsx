@@ -19,12 +19,12 @@ export const ROLE_ACCESS: Record<UserRole, string[]> = {
   none: [],
   admin: [
     '/', '/sop', '/create', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit',
-    '/inbox', '/design-queue', '/references', '/chat',
+    '/message-request', '/design-queue', '/references', '/chat',
     '/clients', '/team', '/clients/new', '/ab-tests',
   ],
   account_manager: [
     '/', '/sop', '/create', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit',
-    '/inbox', '/design-queue', '/references', '/chat',
+    '/message-request', '/design-queue', '/references', '/chat',
     '/clients', '/team', '/clients/new', '/ab-tests',
   ],
   designer: [

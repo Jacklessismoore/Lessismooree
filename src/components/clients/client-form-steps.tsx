@@ -19,7 +19,6 @@ interface FormState {
   website: string;
   instagram: string;
   klaviyo_api_key: string;
-  slack_channel_id: string;
   voice: string;
   rules: string;
   avoid: string;
@@ -158,32 +157,6 @@ export function BasicInfoStep({
         onChange={e => onChange({ klaviyo_api_key: e.target.value })}
         placeholder="pk_xxxxxxxxxxxxxxxx"
       />
-      <div>
-        <div className="flex items-center gap-1.5 mb-1.5">
-          <label className="label-text block">Slack Channel ID</label>
-          <span
-            className="group relative inline-flex items-center justify-center w-4 h-4 rounded-full border border-white/20 text-[9px] text-[#888] cursor-help hover:border-white/40 hover:text-white transition-colors"
-            aria-label="How to find Slack channel ID"
-          >
-            ?
-            <span className="pointer-events-none absolute left-1/2 bottom-full mb-2 -translate-x-1/2 w-64 rounded-lg bg-[#111] border border-white/[0.08] px-3 py-2 text-[11px] leading-snug text-[#ccc] opacity-0 group-hover:opacity-100 transition-opacity z-20 shadow-xl text-left normal-case tracking-normal">
-              <p className="font-semibold text-white mb-1.5">How to find the channel ID</p>
-              <ul className="list-disc pl-4 space-y-1">
-                <li>Open the external Slack channel</li>
-                <li>Click the three dots in the top right</li>
-                <li>Open channel details</li>
-                <li>Scroll to the bottom to find the Channel ID</li>
-              </ul>
-            </span>
-          </span>
-        </div>
-        <input
-          value={form.slack_channel_id}
-          onChange={e => onChange({ slack_channel_id: e.target.value })}
-          placeholder="C0XXXXXXXXX"
-          className="w-full bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 text-sm text-white placeholder:text-[#444] focus:outline-none focus:border-white/20 focus:bg-white/[0.04] transition-all duration-200 ease-out"
-        />
-      </div>
     </div>
   );
 }
