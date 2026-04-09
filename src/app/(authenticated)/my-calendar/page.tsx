@@ -304,9 +304,19 @@ export default function MyCalendarPage() {
   const handleSaveSettings = async () => {
     if (!user) return;
     const trimmed = googleIcsRaw.trim();
-    if (trimmed && !/^https:\/\/calendar\.google\.com\//.test(trimmed)) {
-      toast.error('Paste a Google Calendar secret iCal URL (starts with https://calendar.google.com/…/basic.ics)');
-      return;
+    if (trimmed) {
+      if (!/^https:\/\/calendar\.google\.com\//.test(trimmed)) {
+        toast.error('Must be a Google Calendar URL (https://calendar.google.com/...)');
+        return;
+      }
+      if (trimmed.includes('/calendar/embed')) {
+        toast.error('That\'s the embed URL. Copy the "Secret address in iCal format" instead (ends in /basic.ics)');
+        return;
+      }
+      if (!trimmed.includes('/calendar/ical/') || !trimmed.endsWith('basic.ics')) {
+        toast.error('Paste the iCal URL that ends with /basic.ics (Settings → your calendar → Integrate calendar → Secret address in iCal format)');
+        return;
+      }
     }
     setSavingSettings(true);
     try {
@@ -442,8 +452,13 @@ export default function MyCalendarPage() {
             value={googleIcsRaw}
             onChange={(e) => setGoogleIcsRaw(e.target.value)}
             placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
-            className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-3 text-[11px] text-white placeholder:text-[#444] mb-3 font-mono"
+            className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-3 text-[11px] text-white placeholder:text-[#444] mb-2 font-mono"
           />
+          {savedGoogleIcsSrc && (
+            <p className="text-[10px] text-[#666] mb-3 break-all font-mono">
+              Currently saved: <span className="text-[#888]">{savedGoogleIcsSrc}</span>
+            </p>
+          )}
           <div className="flex items-center gap-2">
             <Button onClick={handleSaveSettings} disabled={savingSettings}>
               {savingSettings ? 'Saving…' : 'Save'}
