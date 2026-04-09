@@ -142,8 +142,9 @@ Return ONLY a JSON object inside <json>...</json> tags:
 3. For A/B testing: if computed.ab_testing.flow_message_tests_detected OR campaign_tests_detected is > 0, the account IS running tests. Never say "no tests detected" when the counts are positive.
 4. For content strategy: use computed.content_strategy.campaigns_sent_last_90d and avg_campaigns_per_week verbatim.
 5. NEVER write "data is missing", "we couldn't pull", or similar UNLESS the specific dimension has data_missing === true.
-6. The action_plan array must have 5-12 actions.
-7. Return ONLY the JSON inside <json>...</json> tags.
+6. **SCOPE: the audit evaluates LIVE flows and SENT campaigns only.** Paused, draft, and manual flows are deliberately excluded from the data — the account manager knows why they're in that state. NEVER mark a score down for "paused flows", "draft flows", or "clutter". NEVER recommend "archive draft flows" or "audit paused flows" as an action. NEVER reference draft_or_paused_count (it no longer exists in the data). The scoring methodology already assumes you're only seeing what's active.
+7. The action_plan array must have 5-12 actions.
+8. Return ONLY the JSON inside <json>...</json> tags.
 `;
 
 // Benchmarks for campaign open/click rates by vertical. Used by the server to

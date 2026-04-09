@@ -252,10 +252,10 @@ interface DimensionResult {
 }
 
 function scoreFlowArchitecture(flows: KlaviyoFlow[]): DimensionResult {
+  // Only evaluate LIVE flows. Paused / draft / manual are deliberately
+  // excluded — the AM knows why they're in that state and they shouldn't
+  // drag the score down.
   const live = flows.filter((f) => f.attributes?.status === 'live' && !f.attributes?.archived);
-  const draftOrPaused = flows.filter(
-    (f) => (f.attributes?.status === 'draft' || f.attributes?.status === 'paused') && !f.attributes?.archived
-  );
 
   const present: Record<FlowSlot, string[]> = {} as Record<FlowSlot, string[]>;
   for (const f of live) {
@@ -270,7 +270,7 @@ function scoreFlowArchitecture(flows: KlaviyoFlow[]): DimensionResult {
   const mustHaveCount = MUST_HAVE.length - missingMustHave.length;
   const shouldHaveCount = SHOULD_HAVE.length - missingShouldHave.length;
 
-  // Stale flows: not updated in 180+ days
+  // Stale flows: live flows that haven't been updated in 180+ days
   const now = Date.now();
   const stale = live.filter((f) => {
     const updated = f.attributes?.updated;
@@ -286,9 +286,8 @@ function scoreFlowArchitecture(flows: KlaviyoFlow[]): DimensionResult {
 
   return {
     score,
+    scoring_scope: 'Live flows only. Paused, draft, and manual flows are excluded from scoring.',
     total_live_flows: live.length,
-    draft_or_paused_count: draftOrPaused.length,
-    draft_or_paused_names: draftOrPaused.map((f) => f.attributes?.name).filter(Boolean),
     must_have_present: MUST_HAVE.filter((s) => present[s]).map((s) => SLOT_LABELS[s]),
     must_have_missing: missingMustHave,
     should_have_present: SHOULD_HAVE.filter((s) => present[s]).map((s) => SLOT_LABELS[s]),
@@ -760,12 +759,50 @@ export async function POST(request: NextRequest) {
 
     // Extract
     const flows = extractList<KlaviyoFlow>(flowsRes);
-    const flowRows = extractRows(flowReportRes);
-    const campaignRows = extractRows(campaignReportRes);
-    const flowVariationRows = extractRows(flowVariationRes);
-    const campaignVariationRows = extractRows(campaignVariationRes);
+    const rawFlowRows = extractRows(flowReportRes);
+    const rawCampaignRows = extractRows(campaignReportRes);
+    const rawFlowVariationRows = extractRows(flowVariationRes);
+    const rawCampaignVariationRows = extractRows(campaignVariationRes);
     const lists = extractList<KlaviyoListOrSegment>(listsRes);
     const segments = extractList<KlaviyoListOrSegment>(segmentsRes);
+
+    // ─── Filter out paused / draft / manual from all scoring ───
+    // Build a set of LIVE flow IDs so we only score live flows' performance.
+    const liveFlowIds = new Set(
+      flows
+        .filter((f) => f.attributes?.status === 'live' && !f.attributes?.archived)
+        .map((f) => f.id)
+    );
+
+    // Build a set of SENT campaign IDs. The /campaigns list gives us status.
+    const campaignsList = extractList<{ id: string; attributes?: { status?: string } }>(
+      campaignsListRes
+    );
+    const sentCampaignIds = new Set(
+      campaignsList
+        .filter((c) => (c.attributes?.status || '').toLowerCase() === 'sent')
+        .map((c) => c.id)
+    );
+
+    // If we couldn't build the sent set (e.g. list call failed), fall back to
+    // including every campaign row that has recipients — they were sent by
+    // definition.
+    const campaignFilter = sentCampaignIds.size > 0
+      ? (row: ReportRow) => {
+          const cId = row.groupings?.campaign_id;
+          return !!cId && sentCampaignIds.has(cId);
+        }
+      : (row: ReportRow) => num(row.statistics?.recipients) > 0;
+
+    const flowFilter = (row: ReportRow) => {
+      const fId = row.groupings?.flow_id;
+      return !!fId && liveFlowIds.has(fId);
+    };
+
+    const flowRows = rawFlowRows.filter(flowFilter);
+    const campaignRows = rawCampaignRows.filter(campaignFilter);
+    const flowVariationRows = rawFlowVariationRows.filter(flowFilter);
+    const campaignVariationRows = rawCampaignVariationRows.filter(campaignFilter);
 
     const flowAgg = aggregateReportRows(flowRows);
     const campaignAgg = aggregateReportRows(campaignRows);
