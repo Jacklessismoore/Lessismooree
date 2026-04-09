@@ -82,19 +82,27 @@ export default function MessageRequestPage() {
 
     setGenerating(true);
     try {
-      // Build the direction for the generator by stitching together the
-      // pasted message + urgency context so the normal generate pipeline
-      // treats it like any other brief.
+      // The pasted client message is the literal source of truth for what
+      // goes in the brief. Claude is normally allowed to use its reasoning
+      // engine to pick a framework and section count, but for message
+      // requests we need it to MATCH the client's stated scope exactly —
+      // if the client said "hero only", the brief has a hero only.
       const direction = [
-        `CLIENT MESSAGE (pasted from Slack / DM / email):`,
-        '---',
+        '=== CLIENT MESSAGE (LITERAL SOURCE OF TRUTH) ===',
         pastedMessage.trim(),
-        '---',
+        '=== END CLIENT MESSAGE ===',
         '',
-        'TASK: Extract the actual ask from the client message above and build the brief around it.',
-        'Identify the offer (if any), the hero product or collection, the angle the client wants,',
-        'and any deadlines or constraints they mentioned. If the client was vague, make a',
-        'reasonable interpretation based on their brand voice and rules.',
+        'BRIEF RULES — THESE OVERRIDE YOUR DEFAULT REASONING ENGINE:',
+        '',
+        '1. The client message above is the EXACT scope of this brief. Do not add sections the client did not ask for.',
+        '2. If the client said "hero only" or "just a hero section" or "one-section email" — produce a brief with ONLY a hero. No body, no product grid, no CTA row, nothing else.',
+        '3. If the client specified a section count (e.g. "3 sections", "two blocks"), match it exactly.',
+        '4. If the client listed specific sections by name (e.g. "hero, one product, CTA"), output exactly those sections in that order — nothing more, nothing less.',
+        '5. If the client only mentioned ONE specific product/collection/offer, the brief is about that ONE thing. Do not pad with unrelated products.',
+        '6. If the client gave vague direction (e.g. "send something about spring"), THEN and only then use your normal framework logic to flesh it out.',
+        '7. Ignore your normal "minimum sections per framework" rule for this brief. The client overrides it.',
+        '',
+        "Read the client message carefully. Count the things they actually asked for. Build a brief for exactly that — not more, not less.",
       ].join('\n');
 
       const formData = {
