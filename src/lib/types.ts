@@ -204,6 +204,34 @@ export interface BriefHistory {
   brand?: Brand;
 }
 
+// ─── Flow Briefs ───
+// AI-generated plan for a Klaviyo flow. Each brief has N emails.
+export interface FlowBriefEmail {
+  position: number; // 1-based
+  label: string; // e.g. "Email 1"
+  send_delay: string; // e.g. "Immediately on trigger" / "3 days after Email 1"
+  goal: string; // one-sentence angle
+  subject: string;
+  preview_text: string;
+  body_outline: string[]; // section-level outline
+}
+
+export interface FlowBrief {
+  id: string;
+  brand_id: string;
+  manager_id: string | null;
+  name: string;
+  flow_type: string; // welcome, abandoned_cart, winback, etc.
+  trigger_description: string;
+  source_notes: string; // the original prompt/notes the user provided
+  emails: FlowBriefEmail[];
+  status: 'draft' | 'approved' | 'building' | 'live';
+  created_at: string;
+  updated_at: string;
+  // Joined
+  brand?: Brand;
+}
+
 export interface BrandProduct {
   id: string;
   brand_id: string;

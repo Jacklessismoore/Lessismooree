@@ -58,8 +58,9 @@ export const NAV_SECTIONS = [
     label: 'Work',
     items: [
       { label: 'Create', href: '/create', icon: '✨' },
-      { label: 'Calendar', href: '/calendar', icon: '📅' },
-      { label: 'Briefs', href: '/briefs', icon: '📁' },
+      { label: 'Campaign Calendar', href: '/calendar', icon: '📅' },
+      { label: 'Campaign Briefs', href: '/briefs', icon: '📁' },
+      { label: 'Flow Briefs', href: '/flow-briefs', icon: '🔀' },
       { label: 'Design Queue', href: '/design-queue', icon: '🎨' },
     ],
   },

@@ -9,18 +9,18 @@ export type UserRole = 'account_manager' | 'designer' | 'scheduler' | 'klaviyo_t
 // Define which routes each role can access
 export const ROLE_ACCESS: Record<UserRole, string[]> = {
   account_manager: [
-    '/', '/sop', '/create', '/calendar', '/briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit',
+    '/', '/sop', '/create', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit',
     '/inbox', '/design-queue', '/references', '/chat',
     '/clients', '/team', '/clients/new', '/ab-tests',
   ],
   designer: [
-    '/', '/create', '/calendar', '/briefs', '/design-queue', '/chat',
+    '/', '/create', '/calendar', '/briefs', '/flow-briefs', '/design-queue', '/chat',
   ],
   scheduler: [
-    '/', '/calendar', '/briefs', '/chat',
+    '/', '/calendar', '/briefs', '/flow-briefs', '/chat',
   ],
   klaviyo_tech: [
-    '/', '/calendar', '/briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit', '/chat', '/ab-tests',
+    '/', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit', '/chat', '/ab-tests',
   ],
 };
 

@@ -1,5 +1,5 @@
 import { createClient } from './supabase/client';
-import { Pod, Manager, Designer, KlaviyoTech, Scheduler, Brand, Strategy, CalendarItem, BriefHistory, BrandProduct, EmailStatus, InboxItem, SOPCompletion, EmailReference } from './types';
+import { Pod, Manager, Designer, KlaviyoTech, Scheduler, Brand, Strategy, CalendarItem, BriefHistory, BrandProduct, EmailStatus, InboxItem, SOPCompletion, EmailReference, FlowBrief } from './types';
 
 function supabase() {
   const client = createClient();
@@ -453,6 +453,56 @@ export async function getBrandsWithSlack(): Promise<Brand[]> {
     .order('name');
   if (error) throw error;
   return data ?? [];
+}
+
+// ─── Flow Briefs ───
+export async function getFlowBriefs(brandId?: string): Promise<FlowBrief[]> {
+  let q = supabase()
+    .from('flow_briefs')
+    .select('*, brand:brands(id, name, color, pod_id, manager_id)')
+    .order('created_at', { ascending: false });
+  if (brandId) q = q.eq('brand_id', brandId);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function getFlowBrief(id: string): Promise<FlowBrief> {
+  const { data, error } = await supabase()
+    .from('flow_briefs')
+    .select('*, brand:brands(id, name, color, pod_id, manager_id)')
+    .eq('id', id)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function createFlowBrief(
+  brief: Omit<FlowBrief, 'id' | 'created_at' | 'updated_at' | 'brand'>
+): Promise<FlowBrief> {
+  const { data, error } = await supabase()
+    .from('flow_briefs')
+    .insert(brief)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateFlowBrief(id: string, updates: Partial<FlowBrief>): Promise<FlowBrief> {
+  const { data, error } = await supabase()
+    .from('flow_briefs')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteFlowBrief(id: string): Promise<void> {
+  const { error } = await supabase().from('flow_briefs').delete().eq('id', id);
+  if (error) throw error;
 }
 
 // Chat Messages
