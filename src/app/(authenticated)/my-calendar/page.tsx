@@ -217,12 +217,18 @@ export default function MyCalendarPage() {
         body: JSON.stringify({ icsUrl: savedGoogleIcsSrc, start, end }),
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        console.error('Failed to load Google Calendar events', err);
+        toast.error(`Google Calendar: ${err.error || 'fetch failed'}`);
         setGoogleEvents([]);
         return;
       }
       const data = await res.json();
-      setGoogleEvents(Array.isArray(data.events) ? data.events : []);
-    } catch {
+      const events = Array.isArray(data.events) ? data.events : [];
+      setGoogleEvents(events);
+      console.log(`Loaded ${events.length} Google events (${data.total || 0} total parsed)`);
+    } catch (err) {
+      console.error('Google Calendar fetch error', err);
       setGoogleEvents([]);
     }
   }, [savedGoogleIcsSrc, viewMonth, viewYear]);
