@@ -453,7 +453,7 @@ export default function NewFlowBriefPage() {
                       </span>
                     </div>
                     <p className="text-[11px] text-[#aaa] italic mb-3">{email.goal}</p>
-                    <div className="space-y-2 mb-3">
+                    <div className="space-y-2 mb-2">
                       <div>
                         <p className="text-[8px] uppercase tracking-wider text-[#666] mb-0.5">Subject</p>
                         <p className="text-[12px] text-white">{email.subject}</p>
@@ -463,17 +463,11 @@ export default function NewFlowBriefPage() {
                         <p className="text-[11px] text-[#ccc]">{email.preview_text}</p>
                       </div>
                     </div>
-                    <div>
-                      <p className="text-[8px] uppercase tracking-wider text-[#666] mb-1">Body outline</p>
-                      <ul className="space-y-1">
-                        {email.body_outline.map((line, j) => (
-                          <li key={j} className="text-[11px] text-[#bbb] flex gap-2">
-                            <span className="text-[#555]">→</span>
-                            <span>{line}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    {email.brief_markdown && (
+                      <p className="text-[9px] text-[#555] mt-2 italic">
+                        Full brief generated ({email.brief_markdown.length.toLocaleString()} chars). Open the saved flow to view.
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}
