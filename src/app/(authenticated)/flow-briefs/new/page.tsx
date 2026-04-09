@@ -45,7 +45,11 @@ export default function NewFlowBriefPage() {
   const [step, setStep] = useState<Step>('brand');
   const [selectedBrand, setSelectedBrand] = useState<Brand | null>(null);
 
+  // Flow type is free-text. Users can pick a preset from the dropdown or type
+  // their own label. We also keep a 'custom' state for when they're typing.
   const [flowType, setFlowType] = useState('welcome');
+  const [flowTypeIsCustom, setFlowTypeIsCustom] = useState(false);
+
   const [flowName, setFlowName] = useState('');
   const [emailCount, setEmailCount] = useState(4);
   const [triggerDescription, setTriggerDescription] = useState('');
@@ -55,6 +59,15 @@ export default function NewFlowBriefPage() {
   const [sourceNotes, setSourceNotes] = useState('');
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [parsingFile, setParsingFile] = useState(false);
+
+  // Incentive / offer fields
+  const [hasOffer, setHasOffer] = useState(false);
+  const [offerType, setOfferType] = useState<'percent' | 'dollar' | 'free_gift' | 'other'>('percent');
+  const [offerValue, setOfferValue] = useState('');
+  const [offerDescription, setOfferDescription] = useState('');
+
+  // AI suggestion state
+  const [suggesting, setSuggesting] = useState(false);
 
   const [generating, setGenerating] = useState(false);
   const [generatedEmails, setGeneratedEmails] = useState<FlowBriefEmail[] | null>(null);
@@ -91,6 +104,44 @@ export default function NewFlowBriefPage() {
     if (orphans.length > 0) groups.push({ manager: null, brands: orphans });
     return groups;
   }, [podBrands, podManagers]);
+
+  const handleSuggest = async () => {
+    if (!selectedBrand) return;
+    if (!flowName.trim()) {
+      toast.error('Give the flow a name first');
+      return;
+    }
+    setSuggesting(true);
+    try {
+      const res = await fetch('/api/flow-briefs/suggest', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          brandId: selectedBrand.id,
+          flowType,
+          flowName: flowName.trim(),
+          emailCount,
+          triggerDescription: triggerDescription.trim(),
+          sourceNotes: sourceNotes.trim(),
+          hasOffer,
+          offerType,
+          offerValue: offerValue.trim(),
+          offerDescription: offerDescription.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Suggest failed');
+      if (data.purpose) setPurpose(data.purpose);
+      if (data.summary) setSummary(data.summary);
+      if (data.trigger_description && !triggerDescription.trim())
+        setTriggerDescription(data.trigger_description);
+      toast.success('Suggestions applied');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Suggest failed');
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -146,6 +197,10 @@ export default function NewFlowBriefPage() {
           purpose: purpose.trim(),
           summary: summary.trim(),
           sourceNotes: sourceNotes.trim(),
+          hasOffer,
+          offerType,
+          offerValue: offerValue.trim(),
+          offerDescription: offerDescription.trim(),
         }),
       });
       const data = await res.json();
@@ -269,17 +324,51 @@ export default function NewFlowBriefPage() {
               <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
                 Flow type
               </label>
-              <select
-                value={flowType}
-                onChange={(e) => setFlowType(e.target.value)}
-                className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white cursor-pointer"
-              >
-                {FLOW_TYPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value} className="bg-[#0A0A0A] text-white">
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+              {flowTypeIsCustom ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={flowType}
+                    onChange={(e) => setFlowType(e.target.value)}
+                    placeholder="e.g. Back in Stock — VIP tier"
+                    className="input-polish flex-1 bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder:text-[#444]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFlowTypeIsCustom(false);
+                      setFlowType('welcome');
+                    }}
+                    className="text-[10px] uppercase tracking-wider text-[#888] hover:text-white transition-colors whitespace-nowrap"
+                  >
+                    Use preset
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <select
+                    value={flowType}
+                    onChange={(e) => setFlowType(e.target.value)}
+                    className="input-polish flex-1 bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white cursor-pointer"
+                  >
+                    {FLOW_TYPE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value} className="bg-[#0A0A0A] text-white">
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFlowTypeIsCustom(true);
+                      setFlowType('');
+                    }}
+                    className="text-[10px] uppercase tracking-wider text-[#888] hover:text-white transition-colors whitespace-nowrap"
+                  >
+                    Type own
+                  </button>
+                </div>
+              )}
             </div>
 
             <div>
@@ -299,8 +388,8 @@ export default function NewFlowBriefPage() {
               <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
                 Number of emails
               </label>
-              <div className="flex items-center gap-2">
-                {[2, 3, 4, 5, 6, 7, 8].map((n) => (
+              <div className="flex items-center gap-2 flex-wrap">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
                   <button
                     key={n}
                     type="button"
@@ -330,30 +419,140 @@ export default function NewFlowBriefPage() {
               />
             </div>
 
-            <div>
-              <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
-                Purpose of the flow
-              </label>
-              <input
-                type="text"
-                value={purpose}
-                onChange={(e) => setPurpose(e.target.value)}
-                placeholder="e.g. Convert cold subscribers into first-time buyers with a warm onboarding sequence"
-                className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder:text-[#444]"
-              />
+            {/* Purpose + Summary with AI Suggest */}
+            <div className="bg-white/[0.02] border border-white/[0.05] rounded-xl p-4 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] uppercase tracking-wider text-[#888]">
+                  Purpose & Summary
+                </p>
+                <button
+                  type="button"
+                  onClick={handleSuggest}
+                  disabled={suggesting}
+                  className="chip-press text-[10px] uppercase tracking-wider text-white bg-white/[0.08] hover:bg-white/[0.14] border border-white/[0.1] px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {suggesting ? 'Thinking…' : 'Suggest'}
+                </button>
+              </div>
+              <p className="text-[10px] text-[#555] leading-relaxed">
+                Fill the details above, then let AI draft the purpose and summary — or type your own.
+              </p>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
+                  Purpose of the flow
+                </label>
+                <input
+                  type="text"
+                  value={purpose}
+                  onChange={(e) => setPurpose(e.target.value)}
+                  placeholder="e.g. Convert cold subscribers into first-time buyers with a warm onboarding sequence"
+                  className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder:text-[#444]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
+                  Summary (2-3 sentences)
+                </label>
+                <textarea
+                  value={summary}
+                  onChange={(e) => setSummary(e.target.value)}
+                  placeholder="Short summary of what this flow is about, who it targets, and the strategy behind it."
+                  rows={3}
+                  className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder:text-[#444] resize-y min-h-[80px]"
+                />
+              </div>
             </div>
 
+            {/* Incentive / offer */}
             <div>
-              <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
-                Summary (2-3 sentences)
+              <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-2">
+                Incentive / offer (optional)
               </label>
-              <textarea
-                value={summary}
-                onChange={(e) => setSummary(e.target.value)}
-                placeholder="Short summary of what this flow is about, who it targets, and the strategy behind it."
-                rows={3}
-                className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder:text-[#444] resize-y min-h-[80px]"
-              />
+              <div className="flex items-center gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={() => setHasOffer(false)}
+                  className={`chip-press flex-1 px-4 py-3 rounded-xl text-[11px] uppercase tracking-wider font-semibold transition-colors min-h-[44px] ${
+                    !hasOffer
+                      ? 'bg-white text-black'
+                      : 'bg-white/[0.03] border border-white/[0.08] text-[#888] hover:text-white'
+                  }`}
+                >
+                  No offer
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHasOffer(true)}
+                  className={`chip-press flex-1 px-4 py-3 rounded-xl text-[11px] uppercase tracking-wider font-semibold transition-colors min-h-[44px] ${
+                    hasOffer
+                      ? 'bg-white text-black'
+                      : 'bg-white/[0.03] border border-white/[0.08] text-[#888] hover:text-white'
+                  }`}
+                >
+                  Has offer
+                </button>
+              </div>
+              {hasOffer && (
+                <div className="bg-white/[0.02] border border-white/[0.05] rounded-xl p-4 space-y-3 animate-fade">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(
+                      [
+                        { value: 'percent', label: '% off' },
+                        { value: 'dollar', label: '$ off' },
+                        { value: 'free_gift', label: 'Free gift' },
+                        { value: 'other', label: 'Other' },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setOfferType(opt.value)}
+                        className={`chip-press px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold transition-colors ${
+                          offerType === opt.value
+                            ? 'bg-white text-black'
+                            : 'bg-white/[0.03] border border-white/[0.08] text-[#888] hover:text-white'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  {(offerType === 'percent' || offerType === 'dollar') && (
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
+                        {offerType === 'percent' ? 'Discount %' : 'Discount $'}
+                      </label>
+                      <input
+                        type="text"
+                        value={offerValue}
+                        onChange={(e) => setOfferValue(e.target.value)}
+                        placeholder={offerType === 'percent' ? 'e.g. 10' : 'e.g. 25'}
+                        className="input-polish w-full max-w-[160px] bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder:text-[#444]"
+                      />
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-wider text-[#666] mb-1.5">
+                      Offer details
+                    </label>
+                    <input
+                      type="text"
+                      value={offerDescription}
+                      onChange={(e) => setOfferDescription(e.target.value)}
+                      placeholder={
+                        offerType === 'free_gift'
+                          ? 'e.g. Free skincare sample with first order'
+                          : offerType === 'other'
+                          ? 'e.g. Free shipping for orders over $100'
+                          : 'e.g. First-time buyer discount, code WELCOME10'
+                      }
+                      className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-2.5 text-[12px] text-white placeholder:text-[#444]"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             <div>

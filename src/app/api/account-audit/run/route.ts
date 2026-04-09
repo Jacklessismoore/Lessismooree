@@ -79,6 +79,116 @@ function extractList<T>(res: unknown): T[] {
   return Array.isArray(data) ? data : [];
 }
 
+// Best-effort repair for a JSON blob that got cut off mid-response.
+// Walks the string, tracks string/brace/bracket depth, trims any trailing
+// incomplete value, and closes any open containers. Returns null if the
+// input doesn't even start with a valid JSON opener.
+function repairTruncatedJson(raw: string): string | null {
+  let s = raw.trim();
+  if (!s.startsWith('{') && !s.startsWith('[')) return null;
+
+  // Strip trailing code fence if present
+  s = s.replace(/```\s*$/, '').trim();
+
+  const stack: Array<'{' | '['> = [];
+  let inString = false;
+  let escape = false;
+  let lastCompleteIdx = -1;
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (ch === '{' || ch === '[') {
+      stack.push(ch as '{' | '[');
+    } else if (ch === '}' || ch === ']') {
+      const want = ch === '}' ? '{' : '[';
+      if (stack[stack.length - 1] === want) {
+        stack.pop();
+        if (stack.length === 0) lastCompleteIdx = i;
+      }
+    }
+  }
+
+  // If we ended cleanly, just return as-is
+  if (stack.length === 0 && !inString) return s;
+
+  // Truncate at the last known-good comma or colon-start of a value, then
+  // close all open containers.
+  let truncAt = s.length;
+  // Walk back to find a safe cut point (last comma outside a string)
+  let inStr = false;
+  let esc = false;
+  let lastSafeComma = -1;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (esc) {
+      esc = false;
+      continue;
+    }
+    if (ch === '\\' && inStr) {
+      esc = true;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = !inStr;
+      continue;
+    }
+    if (inStr) continue;
+    if (ch === ',') lastSafeComma = i;
+  }
+  if (lastSafeComma > 0) truncAt = lastSafeComma;
+
+  let repaired = s.slice(0, truncAt).trimEnd();
+
+  // Rebuild the stack up to this point
+  const stack2: Array<'{' | '['> = [];
+  let inStr2 = false;
+  let esc2 = false;
+  for (let i = 0; i < repaired.length; i++) {
+    const ch = repaired[i];
+    if (esc2) {
+      esc2 = false;
+      continue;
+    }
+    if (ch === '\\' && inStr2) {
+      esc2 = true;
+      continue;
+    }
+    if (ch === '"') {
+      inStr2 = !inStr2;
+      continue;
+    }
+    if (inStr2) continue;
+    if (ch === '{' || ch === '[') stack2.push(ch as '{' | '[');
+    else if (ch === '}') {
+      if (stack2[stack2.length - 1] === '{') stack2.pop();
+    } else if (ch === ']') {
+      if (stack2[stack2.length - 1] === '[') stack2.pop();
+    }
+  }
+
+  // Close anything still open
+  while (stack2.length > 0) {
+    const open = stack2.pop();
+    repaired += open === '{' ? '}' : ']';
+  }
+
+  return repaired;
+}
+
 // ─── Flow presence classification ───
 // Match a flow name/trigger to one of the canonical flow types so we can
 // check what the account is missing.
@@ -730,7 +840,7 @@ ${payloadJson}
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-5',
-      max_tokens: 8000,
+      max_tokens: 16000,
       system: KLAVIYO_AUDIT_SKILL,
       messages: [{ role: 'user', content: userPrompt }],
     });
@@ -740,8 +850,13 @@ ${payloadJson}
       .map((b) => ('text' in b ? b.text : ''))
       .join('');
 
-    // Extract JSON
-    let parsed: {
+    const stopReason = response.stop_reason;
+
+    // Extract JSON. Robust to:
+    //   1. <json>...</json> wrapper
+    //   2. Raw JSON with preamble/trailing text
+    //   3. Output that got truncated before the closing </json> tag
+    type ParsedAudit = {
       overall_score?: number;
       overall_summary?: string;
       top_3_priorities?: string[];
@@ -754,20 +869,64 @@ ${payloadJson}
         recommended_actions?: string[];
       }>;
       action_plan?: Array<{ action: string; owner: string; priority: string; effort: string }>;
-    } | null = null;
-    const m = fullText.match(/<json>([\s\S]*?)<\/json>/) || fullText.match(/\{[\s\S]*\}/);
-    if (m) {
-      try {
-        parsed = JSON.parse((m[1] || m[0]).trim());
-      } catch {
-        parsed = null;
+    };
+
+    const extractJson = (text: string): ParsedAudit | null => {
+      // Try the closed <json> tag first
+      const tagged = text.match(/<json>([\s\S]*?)<\/json>/);
+      if (tagged) {
+        try {
+          return JSON.parse(tagged[1].trim()) as ParsedAudit;
+        } catch {
+          // fall through
+        }
       }
-    }
+      // Try open <json> tag (closing tag missing from truncation)
+      const openTag = text.match(/<json>([\s\S]*)$/);
+      if (openTag) {
+        const body = openTag[1].trim();
+        try {
+          return JSON.parse(body) as ParsedAudit;
+        } catch {
+          // Try to repair: walk until braces balance
+          const repaired = repairTruncatedJson(body);
+          if (repaired) {
+            try {
+              return JSON.parse(repaired) as ParsedAudit;
+            } catch {
+              // fall through
+            }
+          }
+        }
+      }
+      // Last resort: greedy brace match
+      const first = text.indexOf('{');
+      const last = text.lastIndexOf('}');
+      if (first >= 0 && last > first) {
+        const body = text.slice(first, last + 1);
+        try {
+          return JSON.parse(body) as ParsedAudit;
+        } catch {
+          const repaired = repairTruncatedJson(body);
+          if (repaired) {
+            try {
+              return JSON.parse(repaired) as ParsedAudit;
+            } catch {
+              // fall through
+            }
+          }
+        }
+      }
+      return null;
+    };
+
+    const parsed = extractJson(fullText);
 
     if (!parsed || !parsed.overall_summary) {
+      const tail = fullText.slice(-800);
       return NextResponse.json(
         {
-          error: `AI returned no usable audit. First 500 chars: ${fullText.slice(0, 500) || '(empty)'}`,
+          error: `AI returned no usable audit (stop_reason: ${stopReason || 'unknown'}). This usually means the response was truncated. Last 800 chars: ${tail || '(empty)'}`,
         },
         { status: 500 }
       );
