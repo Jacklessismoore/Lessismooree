@@ -116,7 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Prime the state immediately from the existing session so we don't wait
     // for the first onAuthStateChange.
     let mounted = true;
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session } }: { data: { session: { user: User | null } | null } }) => {
       if (!mounted) return;
       const currentUser = session?.user ?? null;
       setUser(currentUser);
