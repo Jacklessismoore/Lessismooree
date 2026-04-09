@@ -149,7 +149,7 @@ function SidebarContent({ onNavClick }: { onNavClick?: () => void }) {
         })}
 
         {/* Settings section — only for account managers */}
-        {role === 'account_manager' && (() => {
+        {(role === 'account_manager' || role === 'admin') && (() => {
           const isCollapsed = collapsedSections['Settings'];
           const hasActive = MANAGEMENT_NAV.some(i => pathname === i.href || pathname.startsWith(i.href + '/'));
           return (
@@ -324,7 +324,7 @@ export function Sidebar() {
               );
               })}
 
-              {role === 'account_manager' && <>
+              {(role === 'account_manager' || role === 'admin') && <>
               <div className="w-5 h-px bg-white/[0.04] my-1" />
 
               {MANAGEMENT_NAV.map(item => {

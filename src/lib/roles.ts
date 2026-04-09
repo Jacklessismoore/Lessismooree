@@ -1,10 +1,16 @@
 import { createClient } from '@/lib/supabase/server';
 
 // These must mirror UserRole in src/lib/auth-context.tsx. Server-side equivalent.
-export type ServerRole = 'account_manager' | 'designer' | 'scheduler' | 'klaviyo_tech';
+export type ServerRole =
+  | 'none'
+  | 'admin'
+  | 'account_manager'
+  | 'designer'
+  | 'scheduler'
+  | 'klaviyo_tech';
 
-// Roles allowed to access the A/B Tests feature.
-export const AB_TEST_ALLOWED_SERVER_ROLES: ServerRole[] = ['account_manager', 'klaviyo_tech'];
+// Roles allowed to access the A/B Tests feature. Admin always has access.
+export const AB_TEST_ALLOWED_SERVER_ROLES: ServerRole[] = ['admin', 'account_manager', 'klaviyo_tech'];
 
 /**
  * Returns the current authenticated user's role from the user_roles table,

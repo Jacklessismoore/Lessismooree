@@ -135,7 +135,7 @@ export default function ABTestsPage() {
   const [deleteConfirmBatchId, setDeleteConfirmBatchId] = useState<string | null>(null);
   const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
 
-  const allowed = role === 'account_manager' || role === 'klaviyo_tech';
+  const allowed = role === 'account_manager' || role === 'klaviyo_tech' || role === 'admin';
 
   // Reset when brand changes
   useEffect(() => {
