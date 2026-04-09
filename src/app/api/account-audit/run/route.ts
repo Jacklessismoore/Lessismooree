@@ -571,24 +571,26 @@ export async function POST(request: NextRequest) {
       campaignsListRes,
     ] = await Promise.all([
       safe(getFlows(apiKey), 'flows'),
-      // Overall flow report — grouped only by flow_id (no variation split)
+      // Overall flow report — grouped by flow_id + flow_message_id so
+      // we get per-message rows (every row in a flow-values-report is an
+      // already-scoped metric bucket)
       safe(
         getFlowReport(apiKey, {
           conversionMetricId: placedOrderId,
           statistics: reportStats,
           timeframe,
-          groupBy: ['send_channel', 'flow_id'],
+          groupBy: ['flow_id', 'flow_message_id'],
         }),
         'flow_report'
       ),
-      // Overall campaign report — grouped only by campaign_id
+      // Overall campaign report — grouped by campaign_id + campaign_message_id
       safe(
         getCampaignReport(apiKey, {
           conversionMetricId: placedOrderId,
           statistics: reportStats,
           timeframe,
           filter: 'equals(send_channel,"email")',
-          groupBy: ['send_channel', 'campaign_id'],
+          groupBy: ['campaign_id', 'campaign_message_id'],
         }),
         'campaign_report'
       ),
@@ -598,14 +600,7 @@ export async function POST(request: NextRequest) {
           conversionMetricId: placedOrderId,
           statistics: ['recipients'],
           timeframe,
-          groupBy: [
-            'send_channel',
-            'flow_id',
-            'flow_name',
-            'flow_message_id',
-            'variation',
-            'variation_name',
-          ],
+          groupBy: ['flow_id', 'flow_message_id', 'variation', 'variation_name'],
         }),
         'flow_variation_report'
       ),
@@ -616,7 +611,7 @@ export async function POST(request: NextRequest) {
           statistics: ['recipients'],
           timeframe,
           filter: 'equals(send_channel,"email")',
-          groupBy: ['send_channel', 'campaign_id', 'campaign_message_id', 'variation', 'variation_name'],
+          groupBy: ['campaign_id', 'campaign_message_id', 'variation', 'variation_name'],
         }),
         'campaign_variation_report'
       ),
@@ -624,6 +619,34 @@ export async function POST(request: NextRequest) {
       safe(getSegments(apiKey), 'segments'),
       safe(getCampaigns(apiKey, 'equals(messages.channel,"email")'), 'campaigns_list'),
     ]);
+
+    // If the main reports errored, surface the errors so we can actually debug
+    const apiErrors: string[] = [];
+    for (const [label, r] of [
+      ['flows', flowsRes],
+      ['flow_report', flowReportRes],
+      ['campaign_report', campaignReportRes],
+      ['flow_variation_report', flowVariationRes],
+      ['campaign_variation_report', campaignVariationRes],
+      ['lists', listsRes],
+      ['segments', segmentsRes],
+      ['campaigns_list', campaignsListRes],
+    ] as const) {
+      const err = (r as { error?: string })?.error;
+      if (err) apiErrors.push(`${label}: ${err}`);
+    }
+    // Only bail if the CRITICAL reports all failed
+    if (
+      (flowReportRes as { error?: string })?.error &&
+      (campaignReportRes as { error?: string })?.error
+    ) {
+      return NextResponse.json(
+        {
+          error: `Klaviyo fetch failed on main reports: ${apiErrors.join(' | ')}`,
+        },
+        { status: 502 }
+      );
+    }
 
     // Extract
     const flows = extractList<KlaviyoFlow>(flowsRes);
@@ -658,25 +681,30 @@ export async function POST(request: NextRequest) {
       content_strategy: dim8.score,
     };
 
-    const overall = round(
-      (Object.values(scores) as number[]).reduce((a, b) => a + b, 0) / 8,
-      2
-    );
+    // Strip server-side 1/2/3 scores from the dimension objects — the AI
+    // re-scores out of 100 using the raw metrics.
+    const stripScore = <T extends DimensionResult>(d: T) => {
+      const copy = { ...d } as Record<string, unknown>;
+      delete copy.score;
+      return copy;
+    };
 
     const computed = {
       vertical,
-      overall_score: overall,
-      scores,
       benchmarks: VERTICAL_BENCHMARKS[vertical] || VERTICAL_BENCHMARKS['General DTC E-Commerce'],
-      flow_architecture: dim1,
-      flow_performance: dim2,
-      campaign_performance: dim3,
-      deliverability_health: dim4,
-      list_health: dim5,
-      revenue_attribution: dim6,
-      ab_testing: dim7,
-      content_strategy: dim8,
+      flow_architecture: stripScore(dim1),
+      flow_performance: stripScore(dim2),
+      campaign_performance: stripScore(dim3),
+      deliverability_health: stripScore(dim4),
+      list_health: stripScore(dim5),
+      revenue_attribution: stripScore(dim6),
+      ab_testing: stripScore(dim7),
+      content_strategy: stripScore(dim8),
+      api_errors: apiErrors.length > 0 ? apiErrors : undefined,
     };
+
+    // Keep scores around purely for debugging — not sent to AI
+    void scores;
 
     const payloadJson = JSON.stringify(
       {
@@ -690,9 +718,9 @@ export async function POST(request: NextRequest) {
 
     const userPrompt = `Audit the Klaviyo account for ${brand.name} (vertical: ${vertical}, covering the last 90 days).
 
-The server has already pulled the data and scored each dimension server-side. The "computed" object below is the source of truth — use computed.scores[dimension] verbatim, and reference the metrics inside each dimension object when writing findings.
+The server pulled the data — it's all in the "computed" object below. YOU are the evaluator: score each of the 8 dimensions 0-100 using the methodology in your system prompt, then write findings and an action plan.
 
-Return the audit as a JSON object wrapped in <json>...</json> tags, following the exact shape described in your system prompt.
+Return the audit as a JSON object wrapped in <json>...</json> tags.
 
 === DATA ===
 \`\`\`json
@@ -714,9 +742,11 @@ ${payloadJson}
 
     // Extract JSON
     let parsed: {
+      overall_score?: number;
       overall_summary?: string;
       top_3_priorities?: string[];
       dimensions?: Record<string, {
+        score?: number;
         one_liner?: string;
         what_was_found?: string;
         what_is_working?: string;

@@ -107,9 +107,13 @@ const DIMENSION_ORDER = [
   'content_strategy',
 ];
 
+// 0-100 band labels to match the page
 function scoreLabel(n: number): { text: string; color: string } {
-  if (n >= 3) return { text: 'Strong', color: '0A7A3A' };
-  if (n >= 2) return { text: 'Needs Work', color: 'B8860B' };
+  if (n >= 90) return { text: 'World Class', color: '0A7A3A' };
+  if (n >= 75) return { text: 'Strong', color: '0A7A3A' };
+  if (n >= 60) return { text: 'Good', color: '558B2F' };
+  if (n >= 40) return { text: 'Needs Work', color: 'B8860B' };
+  if (n >= 20) return { text: 'Poor', color: 'C2410C' };
   return { text: 'Critical', color: 'B91C1C' };
 }
 
@@ -140,7 +144,7 @@ export async function exportAuditDocx(input: AuditExportInput): Promise<void> {
   children.push(heading(`Klaviyo Account Audit — ${input.brandName}`, HeadingLevel.HEADING_1));
   children.push(para(`${input.vertical} · ${input.periodLabel}`, { color: '666666', spacingAfter: 120 }));
   children.push(
-    para(`Overall Score: ${input.overallScore.toFixed(2)} / 3.00`, { bold: true, size: 24, spacingAfter: 240 })
+    para(`Overall Score: ${Math.round(input.overallScore)} / 100`, { bold: true, size: 24, spacingAfter: 240 })
   );
 
   // ── Overall summary ──
@@ -171,7 +175,7 @@ export async function exportAuditDocx(input: AuditExportInput): Promise<void> {
     return new TableRow({
       children: [
         cell(DIMENSION_LABELS[key], COL_DIMENSION),
-        cell(`${s.toFixed(0)} — ${lbl.text}`, COL_SCORE, { color: lbl.color, bold: true }),
+        cell(`${Math.round(s)} / 100 (${lbl.text})`, COL_SCORE, { color: lbl.color, bold: true }),
         cell(dim?.one_liner || '', COL_SUMMARY),
       ],
     });
@@ -202,7 +206,7 @@ export async function exportAuditDocx(input: AuditExportInput): Promise<void> {
     const score = input.scores[key] || 0;
     const lbl = scoreLabel(score);
 
-    children.push(heading(`${DIMENSION_LABELS[key]} — ${lbl.text}`, HeadingLevel.HEADING_2));
+    children.push(heading(`${DIMENSION_LABELS[key]} — ${Math.round(score)}/100 (${lbl.text})`, HeadingLevel.HEADING_2));
 
     if (dim.what_was_found) {
       children.push(para('What we found', { bold: true }));

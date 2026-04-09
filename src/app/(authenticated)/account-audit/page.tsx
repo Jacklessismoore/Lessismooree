@@ -12,18 +12,19 @@ import { exportAuditDocx, AuditDimensionContent } from '@/lib/export-audit-docx'
 import { VERTICAL_LIST } from '@/lib/skills/klaviyo-audit';
 import toast from 'react-hot-toast';
 
+interface AuditDimensionWithScore extends AuditDimensionContent {
+  score: number;
+}
+
 interface AuditPayload {
   brand: { id: string; name: string };
   vertical: string;
   period_label: string;
-  computed: {
-    overall_score: number;
-    scores: Record<string, number>;
-  };
   audit: {
+    overall_score: number;
     overall_summary: string;
     top_3_priorities: string[];
-    dimensions: Record<string, AuditDimensionContent>;
+    dimensions: Record<string, AuditDimensionWithScore>;
     action_plan: Array<{ action: string; owner: string; priority: string; effort: string }>;
   };
 }
@@ -50,10 +51,22 @@ const DIMENSION_ORDER = [
   'content_strategy',
 ];
 
+// 0-100 score → label + colours
 function scoreBadge(n: number): { text: string; color: string; bg: string } {
-  if (n >= 3) return { text: 'STRONG', color: '#10B981', bg: 'rgba(16, 185, 129, 0.12)' };
-  if (n >= 2) return { text: 'NEEDS WORK', color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.12)' };
+  if (n >= 90) return { text: 'WORLD CLASS', color: '#10B981', bg: 'rgba(16, 185, 129, 0.14)' };
+  if (n >= 75) return { text: 'STRONG', color: '#10B981', bg: 'rgba(16, 185, 129, 0.12)' };
+  if (n >= 60) return { text: 'GOOD', color: '#84CC16', bg: 'rgba(132, 204, 22, 0.12)' };
+  if (n >= 40) return { text: 'NEEDS WORK', color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.12)' };
+  if (n >= 20) return { text: 'POOR', color: '#F97316', bg: 'rgba(249, 115, 22, 0.12)' };
   return { text: 'CRITICAL', color: '#EF4444', bg: 'rgba(239, 68, 68, 0.12)' };
+}
+
+function scoreColor(n: number): string {
+  if (n >= 75) return '#10B981';
+  if (n >= 60) return '#84CC16';
+  if (n >= 40) return '#F59E0B';
+  if (n >= 20) return '#F97316';
+  return '#EF4444';
 }
 
 function priorityColor(p: string): string {
@@ -116,12 +129,17 @@ export default function AccountAuditPage() {
     if (!result || !selectedBrand) return;
     setExporting(true);
     try {
+      // Build a scores map from the AI-returned dimension scores
+      const scores: Record<string, number> = {};
+      for (const key of DIMENSION_ORDER) {
+        scores[key] = result.audit.dimensions[key]?.score ?? 0;
+      }
       await exportAuditDocx({
         brandName: selectedBrand.name,
         vertical: result.vertical,
         periodLabel: result.period_label,
-        overallScore: result.computed.overall_score,
-        scores: result.computed.scores,
+        overallScore: result.audit.overall_score,
+        scores,
         overallSummary: result.audit.overall_summary,
         topPriorities: result.audit.top_3_priorities,
         dimensions: result.audit.dimensions,
@@ -237,10 +255,13 @@ export default function AccountAuditPage() {
                   <div>
                     <p className="label-text mb-2">Overall score</p>
                     <div className="flex items-baseline gap-2">
-                      <span className="count-pop text-4xl font-bold text-white">
-                        {result.computed.overall_score.toFixed(2)}
+                      <span
+                        className="count-pop text-5xl font-bold"
+                        style={{ color: scoreColor(result.audit.overall_score) }}
+                      >
+                        {Math.round(result.audit.overall_score)}
                       </span>
-                      <span className="text-sm text-[#666]">/ 3.00</span>
+                      <span className="text-sm text-[#666]">/ 100</span>
                     </div>
                     <p className="text-[10px] text-[#555] mt-1 uppercase tracking-wider">
                       {result.vertical} · {result.period_label}
@@ -275,9 +296,9 @@ export default function AccountAuditPage() {
                 <p className="label-text mb-4">Dimension scores</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 stagger-fast">
                   {DIMENSION_ORDER.map((key) => {
-                    const score = result.computed.scores[key] || 0;
-                    const badge = scoreBadge(score);
                     const dim = result.audit.dimensions[key];
+                    const score = dim?.score ?? 0;
+                    const badge = scoreBadge(score);
                     return (
                       <div
                         key={key}
@@ -294,7 +315,25 @@ export default function AccountAuditPage() {
                             {badge.text}
                           </span>
                         </div>
-                        <p className="text-[10px] text-[#888] leading-relaxed">{dim?.one_liner}</p>
+                        {/* Progress bar */}
+                        <div className="mb-2 h-1 w-full bg-white/[0.04] rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-700 ease-out"
+                            style={{
+                              width: `${score}%`,
+                              backgroundColor: scoreColor(score),
+                            }}
+                          />
+                        </div>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <p className="text-[10px] text-[#888] leading-relaxed flex-1">{dim?.one_liner}</p>
+                          <span
+                            className="text-[13px] font-bold"
+                            style={{ color: scoreColor(score) }}
+                          >
+                            {Math.round(score)}
+                          </span>
+                        </div>
                       </div>
                     );
                   })}
@@ -306,10 +345,10 @@ export default function AccountAuditPage() {
                 <p className="label-text mb-4">Detailed findings</p>
                 <div className="space-y-6">
                   {DIMENSION_ORDER.map((key) => {
-                    const score = result.computed.scores[key] || 0;
-                    const badge = scoreBadge(score);
                     const dim = result.audit.dimensions[key];
                     if (!dim) return null;
+                    const score = dim.score ?? 0;
+                    const badge = scoreBadge(score);
                     return (
                       <div key={key} className="border-l-2 pl-4" style={{ borderColor: badge.color }}>
                         <div className="flex items-center gap-2 mb-2">
@@ -319,6 +358,9 @@ export default function AccountAuditPage() {
                             style={{ color: badge.color, background: badge.bg }}
                           >
                             {badge.text}
+                          </span>
+                          <span className="text-[11px] font-bold ml-auto" style={{ color: scoreColor(score) }}>
+                            {Math.round(score)} / 100
                           </span>
                         </div>
                         {dim.what_was_found && (
