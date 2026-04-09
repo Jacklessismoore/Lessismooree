@@ -1,0 +1,675 @@
+import { NextRequest, NextResponse } from 'next/server';
+import Anthropic from '@anthropic-ai/sdk';
+import { createClient } from '@/lib/supabase/server';
+import {
+  getMetrics,
+  getFlows,
+  getFlowReport,
+  getCampaigns,
+  getCampaignReport,
+  getLists,
+  getSegments,
+} from '@/lib/klaviyo';
+import { KLAVIYO_AUDIT_SKILL, VERTICAL_BENCHMARKS } from '@/lib/skills/klaviyo-audit';
+
+export const maxDuration = 60;
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+
+// ─── Shared helpers ───
+
+interface KlaviyoMetric {
+  id: string;
+  attributes?: { name?: string };
+}
+
+interface KlaviyoFlow {
+  id: string;
+  attributes?: {
+    name?: string;
+    status?: string;
+    trigger_type?: string;
+    archived?: boolean;
+    created?: string;
+    updated?: string;
+  };
+}
+
+interface KlaviyoListOrSegment {
+  id: string;
+  attributes?: { name?: string };
+}
+
+interface ReportRow {
+  groupings: Record<string, string>;
+  statistics: Record<string, number>;
+}
+
+function findMetricId(metrics: KlaviyoMetric[], name: string): string | null {
+  return metrics.find((m) => m.attributes?.name === name)?.id ?? null;
+}
+
+async function safe<T>(p: Promise<T>, label: string, ms = 25_000): Promise<T | { error: string }> {
+  return Promise.race([
+    p.catch((e) => ({ error: `${label}: ${e instanceof Error ? e.message : String(e)}` })),
+    new Promise<{ error: string }>((resolve) =>
+      setTimeout(() => resolve({ error: `${label}: timed out after ${ms}ms` }), ms)
+    ),
+  ]);
+}
+
+function num(v: unknown): number {
+  return typeof v === 'number' && isFinite(v) ? v : 0;
+}
+
+function round(v: number, d = 2): number {
+  const m = Math.pow(10, d);
+  return Math.round(v * m) / m;
+}
+
+function extractRows(res: unknown): ReportRow[] {
+  if (!res || typeof res !== 'object') return [];
+  const r = res as { data?: { attributes?: { results?: ReportRow[] } } };
+  return r?.data?.attributes?.results || [];
+}
+
+function extractList<T>(res: unknown): T[] {
+  if (!res || typeof res !== 'object') return [];
+  const data = (res as { data?: T[] }).data;
+  return Array.isArray(data) ? data : [];
+}
+
+// ─── Flow presence classification ───
+// Match a flow name/trigger to one of the canonical flow types so we can
+// check what the account is missing.
+
+type FlowSlot =
+  | 'welcome'
+  | 'abandoned_cart'
+  | 'browse_abandonment'
+  | 'post_purchase'
+  | 'winback'
+  | 'sunset'
+  | 'vip'
+  | 'back_in_stock'
+  | 'price_drop'
+  | 'review_request'
+  | 'birthday';
+
+const SLOT_LABELS: Record<FlowSlot, string> = {
+  welcome: 'Welcome',
+  abandoned_cart: 'Abandoned Cart',
+  browse_abandonment: 'Browse Abandonment',
+  post_purchase: 'Post-Purchase',
+  winback: 'Winback',
+  sunset: 'Sunset / Re-engagement',
+  vip: 'VIP / Repeat Buyer',
+  back_in_stock: 'Back in Stock',
+  price_drop: 'Price Drop',
+  review_request: 'Review Request',
+  birthday: 'Birthday / Anniversary',
+};
+
+const MUST_HAVE: FlowSlot[] = ['welcome', 'abandoned_cart', 'browse_abandonment', 'post_purchase'];
+const SHOULD_HAVE: FlowSlot[] = ['winback', 'sunset', 'vip', 'back_in_stock', 'review_request'];
+
+function classifyFlow(name: string, trigger: string): FlowSlot | null {
+  const n = name.toLowerCase();
+  const t = trigger.toLowerCase();
+  if (/welcome|signup|new sub|subscribe/.test(n)) return 'welcome';
+  if (/abandon.*cart|cart.*abandon|checkout/.test(n)) return 'abandoned_cart';
+  if (/browse|viewed|product.*abandon/.test(n)) return 'browse_abandonment';
+  if (/post.?purchase|thank.?you|order.?confirm|delivered|shipped/.test(n)) return 'post_purchase';
+  if (/winback|win.?back|lapsed/.test(n)) return 'winback';
+  if (/sunset|re.?engage|unengaged/.test(n)) return 'sunset';
+  if (/vip|loyal|repeat|tier|reward/.test(n)) return 'vip';
+  if (/back.?in.?stock|restock/.test(n)) return 'back_in_stock';
+  if (/price.?drop/.test(n)) return 'price_drop';
+  if (/review|rating|feedback/.test(n)) return 'review_request';
+  if (/birthday|anniversary/.test(n)) return 'birthday';
+  if (t.includes('date')) return 'birthday';
+  return null;
+}
+
+// ─── Dimension scorers ───
+// Each returns { score: 1|2|3, data_missing, summary } and collects whatever
+// extra computed data the AI will reference.
+
+interface DimensionResult {
+  score: 1 | 2 | 3;
+  data_missing?: boolean;
+  [key: string]: unknown;
+}
+
+function scoreFlowArchitecture(flows: KlaviyoFlow[]): DimensionResult {
+  const live = flows.filter((f) => f.attributes?.status === 'live' && !f.attributes?.archived);
+  const draftOrPaused = flows.filter(
+    (f) => (f.attributes?.status === 'draft' || f.attributes?.status === 'paused') && !f.attributes?.archived
+  );
+
+  const present: Record<FlowSlot, string[]> = {} as Record<FlowSlot, string[]>;
+  for (const f of live) {
+    const slot = classifyFlow(f.attributes?.name || '', f.attributes?.trigger_type || '');
+    if (!slot) continue;
+    if (!present[slot]) present[slot] = [];
+    present[slot].push(f.attributes?.name || '(unnamed)');
+  }
+
+  const missingMustHave = MUST_HAVE.filter((slot) => !present[slot]).map((s) => SLOT_LABELS[s]);
+  const missingShouldHave = SHOULD_HAVE.filter((slot) => !present[slot]).map((s) => SLOT_LABELS[s]);
+  const mustHaveCount = MUST_HAVE.length - missingMustHave.length;
+  const shouldHaveCount = SHOULD_HAVE.length - missingShouldHave.length;
+
+  // Stale flows: not updated in 180+ days
+  const now = Date.now();
+  const stale = live.filter((f) => {
+    const updated = f.attributes?.updated;
+    if (!updated) return false;
+    const age = now - new Date(updated).getTime();
+    return age > 180 * 24 * 60 * 60 * 1000;
+  }).map((f) => f.attributes?.name);
+
+  let score: 1 | 2 | 3;
+  if (mustHaveCount === 4 && shouldHaveCount >= 3) score = 3;
+  else if (mustHaveCount === 4) score = 2;
+  else score = 1;
+
+  return {
+    score,
+    total_live_flows: live.length,
+    draft_or_paused_count: draftOrPaused.length,
+    draft_or_paused_names: draftOrPaused.map((f) => f.attributes?.name).filter(Boolean),
+    must_have_present: MUST_HAVE.filter((s) => present[s]).map((s) => SLOT_LABELS[s]),
+    must_have_missing: missingMustHave,
+    should_have_present: SHOULD_HAVE.filter((s) => present[s]).map((s) => SLOT_LABELS[s]),
+    should_have_missing: missingShouldHave,
+    stale_flow_names: stale,
+  };
+}
+
+function aggregateReportRows(rows: ReportRow[]): {
+  recipients: number;
+  delivered: number;
+  weighted_open: number;
+  weighted_click: number;
+  weighted_cto: number;
+  weighted_conv: number;
+  bounce: number;
+  unsub: number;
+  spam: number;
+  revenue: number;
+  denom: number;
+  row_count: number;
+} {
+  let recipients = 0,
+    delivered = 0,
+    openNum = 0,
+    clickNum = 0,
+    ctoNum = 0,
+    convNum = 0,
+    bounceNum = 0,
+    unsubNum = 0,
+    spamNum = 0,
+    revenue = 0,
+    denom = 0;
+  for (const r of rows) {
+    const s = r.statistics || {};
+    const rec = num(s.recipients);
+    const del = num(s.delivered);
+    recipients += rec;
+    delivered += del;
+    revenue += num(s.conversion_value);
+    openNum += num(s.open_rate) * del;
+    clickNum += num(s.click_rate) * del;
+    ctoNum += num(s.click_to_open_rate) * del;
+    convNum += num(s.conversion_rate) * del;
+    bounceNum += num(s.bounce_rate) * del;
+    unsubNum += num(s.unsubscribe_rate) * del;
+    spamNum += num(s.spam_complaint_rate) * del;
+    denom += del;
+  }
+  return {
+    recipients,
+    delivered,
+    weighted_open: denom > 0 ? openNum / denom : 0,
+    weighted_click: denom > 0 ? clickNum / denom : 0,
+    weighted_cto: denom > 0 ? ctoNum / denom : 0,
+    weighted_conv: denom > 0 ? convNum / denom : 0,
+    bounce: denom > 0 ? bounceNum / denom : 0,
+    unsub: denom > 0 ? unsubNum / denom : 0,
+    spam: denom > 0 ? spamNum / denom : 0,
+    revenue,
+    denom,
+    row_count: rows.length,
+  };
+}
+
+function scoreFlowPerformance(rows: ReportRow[]): DimensionResult {
+  if (rows.length === 0) return { score: 1, data_missing: true };
+  const agg = aggregateReportRows(rows);
+  const openPct = round(agg.weighted_open * 100, 1);
+  const clickPct = round(agg.weighted_click * 100, 2);
+
+  // Revenue concentration check
+  const byFlow: Record<string, number> = {};
+  for (const r of rows) {
+    const fId = r.groupings?.flow_id;
+    if (!fId) continue;
+    byFlow[fId] = (byFlow[fId] || 0) + num(r.statistics?.conversion_value);
+  }
+  const flowRevenues = Object.values(byFlow).sort((a, b) => b - a);
+  const totalRev = flowRevenues.reduce((a, b) => a + b, 0);
+  const topFlowShare = totalRev > 0 ? (flowRevenues[0] || 0) / totalRev : 0;
+
+  let score: 1 | 2 | 3;
+  if (openPct >= 40 && clickPct >= 6 && topFlowShare < 0.6) score = 3;
+  else if (openPct < 30 || clickPct < 3 || topFlowShare >= 0.6) score = 1;
+  else score = 2;
+
+  return {
+    score,
+    avg_open_rate_pct: openPct,
+    avg_click_rate_pct: clickPct,
+    avg_conversion_rate_pct: round(agg.weighted_conv * 100, 2),
+    total_flow_revenue: round(agg.revenue, 2),
+    top_flow_revenue_share_pct: round(topFlowShare * 100, 1),
+    flow_row_count: agg.row_count,
+  };
+}
+
+function scoreCampaignPerformance(rows: ReportRow[], vertical: string): DimensionResult {
+  if (rows.length === 0) return { score: 1, data_missing: true };
+  const agg = aggregateReportRows(rows);
+  const openPct = round(agg.weighted_open * 100, 1);
+  const clickPct = round(agg.weighted_click * 100, 2);
+  const ctoPct = round(agg.weighted_cto * 100, 2);
+
+  const bench = VERTICAL_BENCHMARKS[vertical] || VERTICAL_BENCHMARKS['General DTC E-Commerce'];
+  const openMid = (bench.openMin + bench.openMax) / 2;
+  const clickMid = (bench.clickMin + bench.clickMax) / 2;
+
+  let score: 1 | 2 | 3;
+  if (openPct >= openMid && clickPct >= clickMid && ctoPct > 9) score = 3;
+  else if (openPct < bench.openMin || clickPct < bench.clickMin) score = 1;
+  else score = 2;
+
+  return {
+    score,
+    avg_open_rate_pct: openPct,
+    avg_click_rate_pct: clickPct,
+    avg_click_to_open_rate_pct: ctoPct,
+    total_campaign_revenue: round(agg.revenue, 2),
+    campaigns_counted: rows.length,
+    vertical_benchmark: `${bench.openMin}-${bench.openMax}% open, ${bench.clickMin}-${bench.clickMax}% click`,
+  };
+}
+
+function scoreDeliverability(campaignAgg: ReturnType<typeof aggregateReportRows>): DimensionResult {
+  if (campaignAgg.denom === 0) return { score: 1, data_missing: true };
+  const bouncePct = round(campaignAgg.bounce * 100, 3);
+  const spamPct = round(campaignAgg.spam * 100, 3);
+  const deliveryPct = round((campaignAgg.delivered / Math.max(campaignAgg.recipients, 1)) * 100, 2);
+
+  let score: 1 | 2 | 3;
+  if (bouncePct < 0.5 && spamPct < 0.05 && deliveryPct >= 98) score = 3;
+  else if (bouncePct > 1 || spamPct > 0.08 || deliveryPct < 96) score = 1;
+  else score = 2;
+
+  return {
+    score,
+    bounce_rate_pct: bouncePct,
+    spam_complaint_rate_pct: spamPct,
+    delivery_rate_pct: deliveryPct,
+    thresholds: 'Bounce < 1%, Spam < 0.08%, Delivery > 97%',
+  };
+}
+
+function scoreListHealth(lists: KlaviyoListOrSegment[], segments: KlaviyoListOrSegment[]): DimensionResult {
+  const allSegmentNames = segments.map((s) => (s.attributes?.name || '').toLowerCase());
+
+  const hasEngaged = allSegmentNames.some((n) => /engaged|active|opened|clicked/.test(n));
+  const hasSunset = allSegmentNames.some((n) => /sunset|suppress|unengaged|dead/.test(n));
+  const hasVip = allSegmentNames.some((n) => /vip|repeat|loyal|high.?value|tier/.test(n));
+  const hasPurchase = allSegmentNames.some((n) => /buyer|customer|purchased|first.?time|one.?time/.test(n));
+
+  const keyPresent = [hasEngaged, hasSunset, hasVip, hasPurchase].filter(Boolean).length;
+
+  let score: 1 | 2 | 3;
+  if (hasEngaged && hasSunset && keyPresent >= 3) score = 3;
+  else if (hasEngaged && keyPresent >= 2) score = 2;
+  else score = 1;
+
+  return {
+    score,
+    has_engaged_segment: hasEngaged,
+    has_sunset_segment: hasSunset,
+    has_vip_segment: hasVip,
+    has_purchase_segment: hasPurchase,
+    total_lists: lists.length,
+    total_segments: segments.length,
+    key_segments_present: keyPresent,
+  };
+}
+
+function scoreRevenueAttribution(
+  flowAgg: ReturnType<typeof aggregateReportRows>,
+  campaignAgg: ReturnType<typeof aggregateReportRows>
+): DimensionResult {
+  const total = flowAgg.revenue + campaignAgg.revenue;
+  if (total === 0) return { score: 1, data_missing: true };
+  const flowSharePct = round((flowAgg.revenue / total) * 100, 1);
+  const campaignSharePct = round((campaignAgg.revenue / total) * 100, 1);
+
+  let score: 1 | 2 | 3;
+  if (flowSharePct >= 40 && flowSharePct <= 60) score = 3;
+  else if (flowSharePct < 30 || campaignSharePct < 25) score = 1;
+  else score = 2;
+
+  return {
+    score,
+    total_email_revenue: round(total, 2),
+    flow_revenue: round(flowAgg.revenue, 2),
+    campaign_revenue: round(campaignAgg.revenue, 2),
+    flow_revenue_share_pct: flowSharePct,
+    campaign_revenue_share_pct: campaignSharePct,
+    healthy_split: '40-60% / 40-60%',
+  };
+}
+
+function scoreAbTesting(flowRows: ReportRow[], campaignRows: ReportRow[]): DimensionResult {
+  // Heuristic: if any row's groupings contain a non-empty variation, the account tests
+  let flowTests = 0;
+  let campaignTests = 0;
+  const flowVariations = new Set<string>();
+  for (const r of flowRows) {
+    const v = r.groupings?.variation || '';
+    if (v && v !== 'original') {
+      flowVariations.add(r.groupings?.flow_id + '|' + v);
+      flowTests += 1;
+    }
+  }
+  const campaignVariations = new Set<string>();
+  for (const r of campaignRows) {
+    const v = r.groupings?.variation || '';
+    if (v && v !== 'original') {
+      campaignVariations.add(r.groupings?.campaign_id + '|' + v);
+      campaignTests += 1;
+    }
+  }
+
+  let score: 1 | 2 | 3;
+  if (flowTests > 0 && campaignTests > 0) score = 3;
+  else if (flowTests > 0 || campaignTests > 0) score = 2;
+  else score = 1;
+
+  return {
+    score,
+    flow_variation_rows: flowTests,
+    campaign_variation_rows: campaignTests,
+    note:
+      flowTests === 0 && campaignTests === 0
+        ? 'No A/B test variations detected in the last 90 days of report data.'
+        : `Detected ${flowVariations.size} flow test arm(s) and ${campaignVariations.size} campaign test arm(s).`,
+  };
+}
+
+function scoreContentStrategy(
+  recentCampaignsRes: unknown,
+  campaignRows: ReportRow[]
+): DimensionResult {
+  const campaigns = extractList<{
+    id: string;
+    attributes?: {
+      name?: string;
+      send_time?: string;
+      sendTime?: string;
+      status?: string;
+    };
+  }>(recentCampaignsRes);
+
+  // Get campaigns sent in last 90 days
+  const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+  const sent = campaigns.filter((c) => {
+    const t = c.attributes?.send_time || c.attributes?.sendTime;
+    if (!t) return false;
+    return new Date(t).getTime() > cutoff;
+  });
+  const count90d = sent.length;
+  const perWeek = round(count90d / (90 / 7), 1);
+
+  // Subject line repetition signal
+  const names = sent.map((c) => (c.attributes?.name || '').toLowerCase());
+  const uniqueRatio = names.length > 0 ? new Set(names).size / names.length : 1;
+
+  let score: 1 | 2 | 3;
+  if (perWeek >= 2 && perWeek <= 4 && uniqueRatio > 0.85) score = 3;
+  else if (perWeek >= 1 && perWeek <= 5) score = 2;
+  else score = 1;
+
+  return {
+    score,
+    campaigns_sent_last_90d: count90d,
+    avg_campaigns_per_week: perWeek,
+    name_uniqueness_ratio: round(uniqueRatio, 2),
+    campaign_rows_with_stats: campaignRows.length,
+  };
+}
+
+// ─── Main handler ───
+
+export async function POST(request: NextRequest) {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const { brandId, vertical } = (await request.json()) as {
+      brandId: string;
+      vertical: string;
+    };
+
+    if (!brandId) return NextResponse.json({ error: 'brandId required' }, { status: 400 });
+    if (!vertical) return NextResponse.json({ error: 'vertical required' }, { status: 400 });
+
+    const { data: brand } = await supabase
+      .from('brands')
+      .select('id, name, klaviyo_api_key, category')
+      .eq('id', brandId)
+      .single();
+
+    if (!brand) return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
+    if (!brand.klaviyo_api_key) {
+      return NextResponse.json(
+        { error: 'This brand has no Klaviyo API key configured.' },
+        { status: 400 }
+      );
+    }
+
+    const apiKey = brand.klaviyo_api_key;
+    const timeframe = { key: 'last_90_days' };
+
+    const metricsRes = await safe(getMetrics(apiKey), 'metrics');
+    const metrics = extractList<KlaviyoMetric>((metricsRes as unknown) as { data?: KlaviyoMetric[] });
+    const placedOrderId = findMetricId(metrics, 'Placed Order');
+    if (!placedOrderId) {
+      return NextResponse.json({ error: 'Placed Order metric not found.' }, { status: 500 });
+    }
+
+    // Pull everything in parallel
+    const reportStats = [
+      'recipients',
+      'delivered',
+      'open_rate',
+      'click_rate',
+      'click_to_open_rate',
+      'conversion_rate',
+      'conversions',
+      'conversion_value',
+      'bounce_rate',
+      'unsubscribe_rate',
+      'spam_complaint_rate',
+    ];
+
+    const [
+      flowsRes,
+      flowReportRes,
+      campaignReportRes,
+      listsRes,
+      segmentsRes,
+      campaignsListRes,
+    ] = await Promise.all([
+      safe(getFlows(apiKey), 'flows'),
+      safe(
+        getFlowReport(apiKey, {
+          conversionMetricId: placedOrderId,
+          statistics: reportStats,
+          timeframe,
+          groupBy: ['send_channel', 'flow_id', 'variation'],
+        }),
+        'flow_report'
+      ),
+      safe(
+        getCampaignReport(apiKey, {
+          conversionMetricId: placedOrderId,
+          statistics: reportStats,
+          timeframe,
+          filter: 'equals(send_channel,"email")',
+          groupBy: ['send_channel', 'campaign_id', 'variation'],
+        }),
+        'campaign_report'
+      ),
+      safe(getLists(apiKey), 'lists'),
+      safe(getSegments(apiKey), 'segments'),
+      safe(getCampaigns(apiKey, 'equals(messages.channel,"email")'), 'campaigns_list'),
+    ]);
+
+    // Extract
+    const flows = extractList<KlaviyoFlow>(flowsRes);
+    const flowRows = extractRows(flowReportRes);
+    const campaignRows = extractRows(campaignReportRes);
+    const lists = extractList<KlaviyoListOrSegment>(listsRes);
+    const segments = extractList<KlaviyoListOrSegment>(segmentsRes);
+
+    const flowAgg = aggregateReportRows(flowRows);
+    const campaignAgg = aggregateReportRows(campaignRows);
+
+    // Score each dimension
+    const dim1 = scoreFlowArchitecture(flows);
+    const dim2 = scoreFlowPerformance(flowRows);
+    const dim3 = scoreCampaignPerformance(campaignRows, vertical);
+    const dim4 = scoreDeliverability(campaignAgg);
+    const dim5 = scoreListHealth(lists, segments);
+    const dim6 = scoreRevenueAttribution(flowAgg, campaignAgg);
+    const dim7 = scoreAbTesting(flowRows, campaignRows);
+    const dim8 = scoreContentStrategy(campaignsListRes, campaignRows);
+
+    const scores = {
+      flow_architecture: dim1.score,
+      flow_performance: dim2.score,
+      campaign_performance: dim3.score,
+      deliverability_health: dim4.score,
+      list_health: dim5.score,
+      revenue_attribution: dim6.score,
+      ab_testing: dim7.score,
+      content_strategy: dim8.score,
+    };
+
+    const overall = round(
+      (Object.values(scores) as number[]).reduce((a, b) => a + b, 0) / 8,
+      2
+    );
+
+    const computed = {
+      vertical,
+      overall_score: overall,
+      scores,
+      benchmarks: VERTICAL_BENCHMARKS[vertical] || VERTICAL_BENCHMARKS['General DTC E-Commerce'],
+      flow_architecture: dim1,
+      flow_performance: dim2,
+      campaign_performance: dim3,
+      deliverability_health: dim4,
+      list_health: dim5,
+      revenue_attribution: dim6,
+      ab_testing: dim7,
+      content_strategy: dim8,
+    };
+
+    const payloadJson = JSON.stringify(
+      {
+        brand: { name: brand.name, category: brand.category || 'unknown', vertical },
+        period_label: 'Last 90 days',
+        computed,
+      },
+      null,
+      2
+    );
+
+    const userPrompt = `Audit the Klaviyo account for ${brand.name} (vertical: ${vertical}, covering the last 90 days).
+
+The server has already pulled the data and scored each dimension server-side. The "computed" object below is the source of truth — use computed.scores[dimension] verbatim, and reference the metrics inside each dimension object when writing findings.
+
+Return the audit as a JSON object wrapped in <json>...</json> tags, following the exact shape described in your system prompt.
+
+=== DATA ===
+\`\`\`json
+${payloadJson}
+\`\`\`
+`;
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 8000,
+      system: KLAVIYO_AUDIT_SKILL,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+
+    const fullText = response.content
+      .filter((b) => b.type === 'text')
+      .map((b) => ('text' in b ? b.text : ''))
+      .join('');
+
+    // Extract JSON
+    let parsed: {
+      overall_summary?: string;
+      top_3_priorities?: string[];
+      dimensions?: Record<string, {
+        one_liner?: string;
+        what_was_found?: string;
+        what_is_working?: string;
+        what_needs_fixing?: string;
+        recommended_actions?: string[];
+      }>;
+      action_plan?: Array<{ action: string; owner: string; priority: string; effort: string }>;
+    } | null = null;
+    const m = fullText.match(/<json>([\s\S]*?)<\/json>/) || fullText.match(/\{[\s\S]*\}/);
+    if (m) {
+      try {
+        parsed = JSON.parse((m[1] || m[0]).trim());
+      } catch {
+        parsed = null;
+      }
+    }
+
+    if (!parsed || !parsed.overall_summary) {
+      return NextResponse.json(
+        {
+          error: `AI returned no usable audit. First 500 chars: ${fullText.slice(0, 500) || '(empty)'}`,
+        },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      brand: { id: brand.id, name: brand.name },
+      vertical,
+      period_label: 'Last 90 days',
+      computed,
+      audit: parsed,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

@@ -68,6 +68,7 @@ export const NAV_SECTIONS = [
     items: [
       { label: 'Reports', href: '/reports', icon: '📊' },
       { label: 'Weekly Wrap', href: '/weekly-wrap', icon: '📨' },
+      { label: 'Account Audit', href: '/account-audit', icon: '🩺' },
       { label: 'A/B Tests', href: '/ab-tests', icon: '🧪' },
       { label: 'Test Results', href: '/test-results', icon: '📈' },
       { label: 'References', href: '/references', icon: '🔖' },
