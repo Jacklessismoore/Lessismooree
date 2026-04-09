@@ -1,5 +1,5 @@
 import { createClient } from './supabase/client';
-import { Pod, Manager, Designer, KlaviyoTech, Scheduler, Brand, Strategy, CalendarItem, BriefHistory, BrandProduct, EmailStatus, SOPCompletion, EmailReference, FlowBrief } from './types';
+import { Pod, Manager, Designer, KlaviyoTech, Scheduler, Brand, Strategy, CalendarItem, BriefHistory, BrandProduct, EmailStatus, SOPCompletion, EmailReference, FlowBrief, BrandComment } from './types';
 
 function supabase() {
   const client = createClient();
@@ -406,6 +406,38 @@ export async function updateBriefSLPT(id: string, subjectLine: string, previewTe
     .from('brief_history')
     .update({ subject_line: subjectLine, preview_text: previewText })
     .eq('id', id);
+  if (error) throw error;
+}
+
+// ─── Brand Comments ───
+export async function getBrandComments(brandId?: string): Promise<BrandComment[]> {
+  let q = supabase()
+    .from('brand_comments')
+    .select('*, brand:brands(id, name, color, pod_id, manager_id)')
+    .order('created_at', { ascending: false });
+  if (brandId) q = q.eq('brand_id', brandId);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createBrandComment(comment: {
+  brand_id: string;
+  content: string;
+  author_id?: string | null;
+  author_email?: string | null;
+}): Promise<BrandComment> {
+  const { data, error } = await supabase()
+    .from('brand_comments')
+    .insert(comment)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteBrandComment(id: string): Promise<void> {
+  const { error } = await supabase().from('brand_comments').delete().eq('id', id);
   if (error) throw error;
 }
 

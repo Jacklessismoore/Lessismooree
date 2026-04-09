@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase/server';
 import { buildBriefPrompt, buildStrategyPrompt, GENERATION_SYSTEM_PROMPT } from '@/lib/prompts';
-import { BriefType, Brand, CreateFormData } from '@/lib/types';
+import { BriefType, Brand, CreateFormData, BrandComment } from '@/lib/types';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
@@ -43,11 +43,27 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Pull recent brand comments (client call notes / meeting notes) so they
+    // can shape the generated output. Cap at 20 most recent to keep the
+    // prompt a sane size.
+    let brandComments: BrandComment[] = [];
+    try {
+      const { data: commentsData } = await supabase
+        .from('brand_comments')
+        .select('*')
+        .eq('brand_id', brand.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      brandComments = commentsData || [];
+    } catch {
+      // Non-critical — generation still works without comments
+    }
+
     // Build prompt based on type
     const isStrategy = type === 'strategy';
     const prompt = isStrategy
-      ? buildStrategyPrompt(formData, brand)
-      : buildBriefPrompt(baseType as BriefType, formData, brand) + referenceContext;
+      ? buildStrategyPrompt(formData, brand, brandComments)
+      : buildBriefPrompt(baseType as BriefType, formData, brand, brandComments) + referenceContext;
 
     // Call Claude with agency knowledge system prompt
     const message = await anthropic.messages.create({

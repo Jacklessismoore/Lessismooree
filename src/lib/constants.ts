@@ -72,6 +72,7 @@ export const NAV_SECTIONS = [
       { label: 'Account Audit', href: '/account-audit', icon: '🩺' },
       { label: 'A/B Tests', href: '/ab-tests', icon: '🧪' },
       { label: 'Test Results', href: '/test-results', icon: '📈' },
+      { label: 'Client Comments', href: '/client-comments', icon: '📝' },
       { label: 'References', href: '/references', icon: '🔖' },
       { label: 'Chat', href: '/chat', icon: '💬' },
     ],

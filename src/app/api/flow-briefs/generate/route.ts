@@ -62,6 +62,15 @@ export async function POST(request: NextRequest) {
 
     if (!brand) return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
 
+    // Pull the most recent brand comments so per-email briefs respect
+    // the latest client call notes.
+    const { data: brandComments } = await supabase
+      .from('brand_comments')
+      .select('*')
+      .eq('brand_id', brand.id)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
     // ─── STEP 1: Plan the flow (sequence-level) ───
     // Ask the flow-planner skill to return the sequence: position, label,
     // delay, goal, subject, preview — but NOT the full body copy. That
@@ -155,7 +164,7 @@ ${JSON.stringify(planInput, null, 2)}
 
       // Use the existing campaign brief prompt shape so the output format
       // matches what the rest of the app already renders.
-      const prompt = buildBriefPrompt('campaign', formData, typedBrand);
+      const prompt = buildBriefPrompt('campaign', formData, typedBrand, brandComments || []);
 
       const msg = await anthropic.messages.create({
         model: 'claude-sonnet-4-5',

@@ -1,6 +1,23 @@
-import { Brand, BriefType, CreateFormData } from './types';
+import { Brand, BrandComment, BriefType, CreateFormData } from './types';
 
-function brandContext(brand: Brand): string {
+// Formats the most recent brand comments into a short bullet list the AI
+// can reference. Keeps only what fits in ~1500 chars so we don't bloat the
+// prompt with every note ever written.
+export function formatBrandComments(comments: BrandComment[] | null | undefined): string {
+  if (!comments || comments.length === 0) return 'None';
+  const lines: string[] = [];
+  let budget = 1500;
+  for (const c of comments) {
+    const date = c.created_at ? new Date(c.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+    const line = `- [${date}] ${c.content.replace(/\s+/g, ' ').trim()}`;
+    if (line.length > budget) break;
+    lines.push(line);
+    budget -= line.length + 1;
+  }
+  return lines.length > 0 ? lines.join('\n') : 'None';
+}
+
+function brandContext(brand: Brand, comments?: BrandComment[]): string {
   return `Brand: ${brand.name} | ${brand.category} | ${brand.location}
 Voice: ${brand.voice || 'Not specified'}
 Rules: ${brand.rules || 'None'}
@@ -8,7 +25,9 @@ AVOID (never use any of these in copy): ${brand.avoid?.trim() || 'None specified
 Products: ${brand.products?.join(', ') || 'Not specified'}
 Audiences: ${brand.audiences?.join(', ') || 'Not specified'}
 Founder: ${brand.founder || 'Not specified'}
-Context: ${(brand.notes || '').slice(0, 1500)}`;
+Context: ${(brand.notes || '').slice(0, 1500)}
+Recent client comments / call notes (read carefully, these reflect the latest conversation with the client):
+${formatBrandComments(comments)}`;
 }
 
 // ─── CORE SYSTEM PROMPT ───
@@ -147,7 +166,7 @@ CONTENT TO FORMAT QUICK MAP:
 
 // ─── BRIEF PROMPTS ───
 
-export function buildBriefPrompt(type: BriefType, formData: CreateFormData, brand: Brand): string {
+export function buildBriefPrompt(type: BriefType, formData: CreateFormData, brand: Brand, comments?: BrandComment[]): string {
   const typeLabels: Record<string, string> = {
     campaign: 'campaign email brief',
     flow: 'automated flow email brief',
@@ -267,7 +286,7 @@ A/B Test Priority Tiers:
 
   return `Write a production-ready email copy document for ${brand.name}.
 
-${brandContext(brand)}
+${brandContext(brand, comments)}
 ${brand.website ? `Website: ${brand.website}` : ''}
 
 Email Name: ${formData.title}
@@ -312,10 +331,10 @@ No preamble. No strategy summary. Just the copy document.`}`;
 
 // ─── STRATEGY PROMPT ───
 
-export function buildStrategyPrompt(formData: CreateFormData, brand: Brand): string {
+export function buildStrategyPrompt(formData: CreateFormData, brand: Brand, comments?: BrandComment[]): string {
   return `Create a FULL monthly email marketing strategy for ${brand.name} for ${formData.month} ${formData.year}.
 
-${brandContext(brand)}
+${brandContext(brand, comments)}
 
 Direction: ${formData.brief}
 

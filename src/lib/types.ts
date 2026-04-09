@@ -203,6 +203,20 @@ export interface BriefHistory {
   brand?: Brand;
 }
 
+// ─── Brand Comments ───
+// Lightweight client-meeting / call / ad-hoc notes attached to a brand.
+// Surfaced in the brand context passed to every brief and strategy call.
+export interface BrandComment {
+  id: string;
+  brand_id: string;
+  author_id: string | null;
+  author_email: string | null;
+  content: string;
+  created_at: string;
+  // Joined
+  brand?: Brand;
+}
+
 // ─── Flow Briefs ───
 // AI-generated plan for a Klaviyo flow. Each brief has N emails. Every email
 // gets rendered as a full Campaign Brief (same markdown output) so designers

@@ -19,12 +19,12 @@ export const ROLE_ACCESS: Record<UserRole, string[]> = {
   none: [],
   admin: [
     '/', '/sop', '/create', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit',
-    '/message-request', '/design-queue', '/references', '/chat',
+    '/message-request', '/design-queue', '/references', '/chat', '/client-comments',
     '/clients', '/team', '/clients/new', '/ab-tests',
   ],
   account_manager: [
     '/', '/sop', '/create', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit',
-    '/message-request', '/design-queue', '/references', '/chat',
+    '/message-request', '/design-queue', '/references', '/chat', '/client-comments',
     '/clients', '/team', '/clients/new', '/ab-tests',
   ],
   designer: [
@@ -34,7 +34,7 @@ export const ROLE_ACCESS: Record<UserRole, string[]> = {
     '/', '/calendar', '/briefs', '/flow-briefs', '/chat',
   ],
   klaviyo_tech: [
-    '/', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit', '/chat', '/ab-tests',
+    '/', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit', '/chat', '/ab-tests', '/client-comments',
   ],
 };
 
