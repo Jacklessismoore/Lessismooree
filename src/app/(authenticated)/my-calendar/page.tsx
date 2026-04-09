@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import {
   getCalendarItems,
-  getUserCalendarSettings,
   saveUserCalendarSettings,
   getPersonalTasks,
   createPersonalTask,
@@ -118,6 +117,8 @@ export default function MyCalendarPage() {
   const [googleEvents, setGoogleEvents] = useState<GoogleEvent[]>([]);
   const [savingSettings, setSavingSettings] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // Google OAuth (write access for auto-sync)
+  const [googleAccountEmail, setGoogleAccountEmail] = useState<string | null>(null);
 
   // Brands the user "owns" — we use manager_id match against auth user for
   // now. Since managers are a separate concept, fall back to ALL brands the
@@ -212,10 +213,19 @@ export default function MyCalendarPage() {
   const loadSettings = useCallback(async () => {
     if (!user) return;
     try {
-      const s = await getUserCalendarSettings(user.id);
+      const sb = createClient();
+      if (!sb) return;
+      const { data: s } = await sb
+        .from('user_calendar_settings')
+        .select('google_ics_src, google_account_email')
+        .eq('user_id', user.id)
+        .maybeSingle();
       if (s?.google_ics_src) {
         setSavedGoogleIcsSrc(s.google_ics_src);
         setGoogleIcsRaw(s.google_ics_src);
+      }
+      if (s?.google_account_email) {
+        setGoogleAccountEmail(s.google_account_email);
       }
     } catch {
       // non-critical
@@ -268,6 +278,20 @@ export default function MyCalendarPage() {
   useEffect(() => {
     loadGoogleEvents();
   }, [loadGoogleEvents]);
+
+  // Handle the OAuth callback redirect: ?google_connected=1 or ?google_error=...
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('google_connected')) {
+      toast.success('Google Calendar connected — tasks will auto-sync');
+      loadSettings();
+      window.history.replaceState({}, '', '/my-calendar');
+    } else if (params.get('google_error')) {
+      toast.error(`Google connect failed: ${params.get('google_error')}`);
+      window.history.replaceState({}, '', '/my-calendar');
+    }
+  }, [loadSettings]);
 
   const goPrevMonth = () => {
     if (viewMonth === 0) {
@@ -406,6 +430,19 @@ export default function MyCalendarPage() {
     return map;
   }, [cells, isAccountManager, personalTasks]);
 
+  const syncTaskToGoogle = async (task: PersonalTask, action: 'create' | 'update' | 'delete') => {
+    if (!googleAccountEmail) return; // not connected, skip
+    try {
+      await fetch('/api/my-calendar/sync-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task, action }),
+      });
+    } catch {
+      // silent — manual + GCAL link is always available
+    }
+  };
+
   const handleAddTask = async () => {
     if (!user || !selectedDay || !newTaskTitle.trim()) return;
     if (newTaskStart && newTaskEnd && newTaskEnd <= newTaskStart) {
@@ -426,6 +463,8 @@ export default function MyCalendarPage() {
       setNewTaskStart('');
       setNewTaskEnd('');
       setNewTaskEod(false);
+      // Fire-and-forget Google Calendar sync
+      syncTaskToGoogle(created, 'create');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to add task');
     }
@@ -488,6 +527,9 @@ export default function MyCalendarPage() {
 
   const handleDeleteTask = async (task: PersonalTask) => {
     setPersonalTasks((prev) => prev.filter((t) => t.id !== task.id));
+    // Fire Google delete BEFORE the row is removed so the sync endpoint can
+    // still look up google_event_id from the DB.
+    syncTaskToGoogle(task, 'delete');
     try {
       await deletePersonalTask(task.id);
     } catch {
@@ -556,6 +598,34 @@ export default function MyCalendarPage() {
           <p className="text-[10px] text-[#555] mt-3">
             Only you can see this — the secret address is private, and events are pulled server-side and rendered inline in the grid below.
           </p>
+
+          <div className="border-t border-white/[0.06] my-5" />
+
+          <p className="label-text mb-2">Auto-sync new tasks to Google</p>
+          <p className="text-[11px] text-[#888] leading-relaxed mb-4">
+            Read-only ICS can&apos;t write events back. Connect your Google account here so tasks you create in My Calendar get created in Google Calendar automatically.
+          </p>
+          {googleAccountEmail ? (
+            <div className="flex items-center justify-between bg-emerald-400/[0.05] border border-emerald-400/20 rounded-lg px-4 py-3">
+              <div>
+                <p className="text-[11px] text-emerald-300">Connected to {googleAccountEmail}</p>
+                <p className="text-[10px] text-[#666] mt-0.5">New tasks will auto-create in Google Calendar.</p>
+              </div>
+              <a
+                href="/api/google-oauth/start"
+                className="text-[10px] uppercase tracking-wider text-[#888] hover:text-white"
+              >
+                Reconnect
+              </a>
+            </div>
+          ) : (
+            <a
+              href="/api/google-oauth/start"
+              className="inline-flex items-center gap-2 chip-press bg-white/[0.04] border border-white/[0.08] hover:border-white/20 rounded-lg px-4 py-2.5 text-[11px] text-white"
+            >
+              <span>🔗</span> Connect Google account
+            </a>
+          )}
         </Card>
       )}
 
