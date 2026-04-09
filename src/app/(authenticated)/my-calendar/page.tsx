@@ -25,8 +25,22 @@ type DayTask =
   | { kind: 'non_negotiable'; id: string; title: string; date: string }
   | { kind: 'custom'; task: PersonalTask };
 
+interface GoogleEvent {
+  uid: string;
+  title: string;
+  start: string;
+  end: string | null;
+  allDay: boolean;
+}
+
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatEventTime(iso: string, allDay: boolean): string {
+  if (allDay) return 'All day';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 const MONTH_NAMES = [
@@ -54,35 +68,6 @@ function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-// Parse a Google Calendar embed value into a proper iframe src.
-// Users will paste one of:
-//   - full iframe: <iframe src="https://calendar.google.com/calendar/embed?..." ...></iframe>
-//   - raw URL: https://calendar.google.com/calendar/embed?src=...
-//   - just the calendar ID / email: jack@lessismoore.com
-function parseGoogleEmbed(input: string): string | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  // Full iframe string — extract src
-  if (trimmed.startsWith('<iframe')) {
-    const srcMatch = trimmed.match(/src=["']([^"']+)["']/);
-    if (srcMatch) return srcMatch[1];
-    return null;
-  }
-
-  // Already a full embed URL
-  if (trimmed.startsWith('https://calendar.google.com/') || trimmed.startsWith('http://calendar.google.com/')) {
-    return trimmed;
-  }
-
-  // Looks like an email / calendar ID → build a default embed URL
-  if (/@/.test(trimmed)) {
-    return `https://calendar.google.com/calendar/embed?src=${encodeURIComponent(trimmed)}&ctz=Australia%2FSydney`;
-  }
-
-  return null;
-}
-
 export default function MyCalendarPage() {
   const { user, role } = useAuth();
   const { brands } = useApp();
@@ -107,9 +92,10 @@ export default function MyCalendarPage() {
   const [personalTasks, setPersonalTasks] = useState<PersonalTask[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState('');
 
-  // Google settings
-  const [googleEmbedRaw, setGoogleEmbedRaw] = useState('');
-  const [savedGoogleSrc, setSavedGoogleSrc] = useState<string | null>(null);
+  // Google settings (ICS for inline overlay)
+  const [googleIcsRaw, setGoogleIcsRaw] = useState('');
+  const [savedGoogleIcsSrc, setSavedGoogleIcsSrc] = useState<string | null>(null);
+  const [googleEvents, setGoogleEvents] = useState<GoogleEvent[]>([]);
   const [savingSettings, setSavingSettings] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -207,14 +193,39 @@ export default function MyCalendarPage() {
     if (!user) return;
     try {
       const s = await getUserCalendarSettings(user.id);
-      if (s?.google_embed_src) {
-        setSavedGoogleSrc(s.google_embed_src);
-        setGoogleEmbedRaw(s.google_embed_src);
+      if (s?.google_ics_src) {
+        setSavedGoogleIcsSrc(s.google_ics_src);
+        setGoogleIcsRaw(s.google_ics_src);
       }
     } catch {
       // non-critical
     }
   }, [user]);
+
+  const loadGoogleEvents = useCallback(async () => {
+    if (!savedGoogleIcsSrc) {
+      setGoogleEvents([]);
+      return;
+    }
+    try {
+      // Load a generous window around the visible month so week view works too
+      const start = new Date(viewYear, viewMonth - 1, 1).toISOString();
+      const end = new Date(viewYear, viewMonth + 2, 1).toISOString();
+      const res = await fetch('/api/my-calendar/ics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ icsUrl: savedGoogleIcsSrc, start, end }),
+      });
+      if (!res.ok) {
+        setGoogleEvents([]);
+        return;
+      }
+      const data = await res.json();
+      setGoogleEvents(Array.isArray(data.events) ? data.events : []);
+    } catch {
+      setGoogleEvents([]);
+    }
+  }, [savedGoogleIcsSrc, viewMonth, viewYear]);
 
   useEffect(() => {
     loadWork();
@@ -227,6 +238,10 @@ export default function MyCalendarPage() {
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  useEffect(() => {
+    loadGoogleEvents();
+  }, [loadGoogleEvents]);
 
   const goPrevMonth = () => {
     if (viewMonth === 0) {
@@ -282,15 +297,15 @@ export default function MyCalendarPage() {
 
   const handleSaveSettings = async () => {
     if (!user) return;
-    const parsed = parseGoogleEmbed(googleEmbedRaw);
-    if (!parsed && googleEmbedRaw.trim()) {
-      toast.error("Couldn't understand that embed. Paste the full <iframe> or the embed URL.");
+    const trimmed = googleIcsRaw.trim();
+    if (trimmed && !/^https:\/\/calendar\.google\.com\//.test(trimmed)) {
+      toast.error('Paste a Google Calendar secret iCal URL (starts with https://calendar.google.com/…/basic.ics)');
       return;
     }
     setSavingSettings(true);
     try {
-      await saveUserCalendarSettings(user.id, parsed || '');
-      setSavedGoogleSrc(parsed || null);
+      await saveUserCalendarSettings(user.id, { google_ics_src: trimmed || null });
+      setSavedGoogleIcsSrc(trimmed || null);
       toast.success('Google Calendar saved');
       setShowSettings(false);
     } catch (err) {
@@ -312,6 +327,21 @@ export default function MyCalendarPage() {
     }
     return map;
   }, [workItems]);
+
+  // Google Calendar events grouped by day (YYYY-MM-DD)
+  const googleByDay = useMemo(() => {
+    const map: Record<string, GoogleEvent[]> = {};
+    for (const ev of googleEvents) {
+      const key = ev.start.slice(0, 10);
+      if (!map[key]) map[key] = [];
+      map[key].push(ev);
+    }
+    // Sort each day by start time
+    for (const key of Object.keys(map)) {
+      map[key].sort((a, b) => a.start.localeCompare(b.start));
+    }
+    return map;
+  }, [googleEvents]);
 
   // Auto-generated non-negotiables: "Send over a win" every Mon/Fri for account managers
   const tasksByDay = useMemo(() => {
@@ -379,6 +409,7 @@ export default function MyCalendarPage() {
   const selectedDayKey = selectedDay ? ymd(selectedDay) : '';
   const selectedDayItems = selectedDay ? workByDay[selectedDayKey] || [] : [];
   const selectedDayTasks = selectedDay ? tasksByDay[selectedDayKey] || [] : [];
+  const selectedDayGoogle = selectedDay ? googleByDay[selectedDayKey] || [] : [];
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -387,7 +418,7 @@ export default function MyCalendarPage() {
         subtitle="Client work + your Google Calendar, in one view."
         actions={
           <Button variant="secondary" size="sm" onClick={() => setShowSettings((s) => !s)}>
-            {showSettings ? 'Close' : savedGoogleSrc ? 'Google synced' : '+ Google'}
+            {showSettings ? 'Close' : savedGoogleIcsSrc ? 'Google synced' : '+ Google'}
           </Button>
         }
       />
@@ -397,28 +428,29 @@ export default function MyCalendarPage() {
         <Card className="p-6 mb-6 animate-fade">
           <p className="label-text mb-2">Connect Google Calendar</p>
           <p className="text-[11px] text-[#888] leading-relaxed mb-4">
-            In Google Calendar, go to Settings → your calendar → Integrate calendar → copy the{' '}
-            <span className="text-white">Embed code</span> or the public URL. Paste it below.
+            In Google Calendar, go to Settings → your calendar → <span className="text-white">Integrate calendar</span> → copy the{' '}
+            <span className="text-white">Secret address in iCal format</span>. Paste the URL below (ends in <code className="text-white">basic.ics</code>).
           </p>
-          <textarea
-            value={googleEmbedRaw}
-            onChange={(e) => setGoogleEmbedRaw(e.target.value)}
-            placeholder={`<iframe src="https://calendar.google.com/calendar/embed?src=..."></iframe>\nor just\nhttps://calendar.google.com/calendar/embed?src=...\nor your calendar ID (email)`}
-            rows={4}
-            className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-3 text-[11px] text-white placeholder:text-[#444] resize-y min-h-[100px] mb-3 font-mono"
+          <input
+            type="text"
+            value={googleIcsRaw}
+            onChange={(e) => setGoogleIcsRaw(e.target.value)}
+            placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
+            className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-3 text-[11px] text-white placeholder:text-[#444] mb-3 font-mono"
           />
           <div className="flex items-center gap-2">
             <Button onClick={handleSaveSettings} disabled={savingSettings}>
               {savingSettings ? 'Saving…' : 'Save'}
             </Button>
-            {savedGoogleSrc && (
+            {savedGoogleIcsSrc && (
               <Button
                 variant="secondary"
                 onClick={async () => {
                   if (!user) return;
-                  await saveUserCalendarSettings(user.id, '');
-                  setSavedGoogleSrc(null);
-                  setGoogleEmbedRaw('');
+                  await saveUserCalendarSettings(user.id, { google_ics_src: null });
+                  setSavedGoogleIcsSrc(null);
+                  setGoogleIcsRaw('');
+                  setGoogleEvents([]);
                   toast.success('Disconnected');
                 }}
               >
@@ -427,7 +459,7 @@ export default function MyCalendarPage() {
             )}
           </div>
           <p className="text-[10px] text-[#555] mt-3">
-            Note: the calendar must be shared publicly or with a secret address for the embed to load — this is a Google requirement, not an app limit.
+            Only you can see this — the secret address is private, and events are pulled server-side and rendered inline in the grid below.
           </p>
         </Card>
       )}
@@ -535,32 +567,34 @@ export default function MyCalendarPage() {
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
                 )}
               </div>
-              {dayItems.length === 0 && dayTasks.length === 0 ? (
-                <p className="text-[10px] text-[#444]">Nothing scheduled</p>
-              ) : (
-                <div className="flex items-center gap-2 flex-wrap">
-                  {dayItems.slice(0, 3).map((item) => (
-                    <span
-                      key={item.id}
-                      className="text-[10px] text-[#aaa] flex items-center gap-1"
-                    >
-                      <span
-                        className="w-1.5 h-1.5 rounded-full"
-                        style={{ backgroundColor: item.brand?.color || '#666' }}
-                      />
-                      {item.brand?.name}
-                    </span>
-                  ))}
-                  {dayItems.length > 3 && (
-                    <span className="text-[9px] text-[#555]">+{dayItems.length - 3} more</span>
-                  )}
-                  {dayTasks.length > 0 && (
-                    <span className="text-[10px] text-[#888]">
-                      · {dayTasks.length} task{dayTasks.length === 1 ? '' : 's'}
-                    </span>
-                  )}
-                </div>
-              )}
+              {(() => {
+                const dayGoogle = googleByDay[key] || [];
+                const nothing = dayItems.length === 0 && dayTasks.length === 0 && dayGoogle.length === 0;
+                if (nothing) return <p className="text-[10px] text-[#444]">Nothing scheduled</p>;
+                return (
+                  <div className="flex flex-col gap-1 mt-0.5">
+                    {dayItems.slice(0, 2).map((item) => (
+                      <span key={item.id} className="text-[10px] text-[#aaa] flex items-center gap-1.5 truncate">
+                        <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: item.brand?.color || '#666' }} />
+                        {item.brand?.name}
+                      </span>
+                    ))}
+                    {dayGoogle.slice(0, 2).map((ev) => (
+                      <span key={ev.uid} className="text-[10px] text-[#9cb4ff] flex items-center gap-1.5 truncate">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#6b8cff] flex-shrink-0" />
+                        <span className="truncate">{formatEventTime(ev.start, ev.allDay)} · {ev.title}</span>
+                      </span>
+                    ))}
+                    {(dayItems.length + dayGoogle.length > 4 || dayTasks.length > 0) && (
+                      <span className="text-[9px] text-[#555]">
+                        {dayItems.length + dayGoogle.length > 4 && `+${dayItems.length + dayGoogle.length - 4} more`}
+                        {dayItems.length + dayGoogle.length > 4 && dayTasks.length > 0 && ' · '}
+                        {dayTasks.length > 0 && `${dayTasks.length} task${dayTasks.length === 1 ? '' : 's'}`}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
             </button>
           );
         })}
@@ -587,6 +621,7 @@ export default function MyCalendarPage() {
             const key = ymd(cell);
             const dayItems = workByDay[key] || [];
             const dayTasks = tasksByDay[key] || [];
+            const dayGoogle = googleByDay[key] || [];
             const hasNonNegotiable = dayTasks.some((t) => t.kind === 'non_negotiable');
             const isToday = isSameDay(cell, today);
             const isSelected = selectedDay && isSameDay(cell, selectedDay);
@@ -615,7 +650,7 @@ export default function MyCalendarPage() {
                     title="Non-negotiable"
                   />
                 )}
-                {(dayItems.length > 0 || dayTasks.length > 0) && (
+                {(dayItems.length > 0 || dayTasks.length > 0 || dayGoogle.length > 0) && (
                   <div className="mt-auto w-full flex flex-col gap-0.5 overflow-hidden">
                     {dayItems.slice(0, 2).map((item) => (
                       <div
@@ -624,13 +659,22 @@ export default function MyCalendarPage() {
                         style={{ backgroundColor: item.brand?.color || '#666' }}
                       />
                     ))}
+                    {dayGoogle.slice(0, 2).map((ev) => (
+                      <span
+                        key={ev.uid}
+                        className="hidden sm:inline text-[8px] text-[#9cb4ff] truncate"
+                      >
+                        <span className="inline-block w-1 h-1 rounded-full bg-[#6b8cff] mr-1 align-middle" />
+                        {ev.title}
+                      </span>
+                    ))}
                     {dayTasks.length > 0 && (
                       <span className="hidden sm:inline text-[8px] text-[#999] truncate">
                         {dayTasks.length} task{dayTasks.length === 1 ? '' : 's'}
                       </span>
                     )}
-                    {dayItems.length > 2 && (
-                      <span className="hidden sm:inline text-[7px] text-[#666]">+{dayItems.length - 2}</span>
+                    {dayItems.length + dayGoogle.length > 4 && (
+                      <span className="hidden sm:inline text-[7px] text-[#666]">+{dayItems.length + dayGoogle.length - 4}</span>
                     )}
                   </div>
                 )}
@@ -715,6 +759,31 @@ export default function MyCalendarPage() {
             </div>
           </div>
 
+          {/* Google Calendar events */}
+          {savedGoogleIcsSrc && (
+            <div className="mb-4">
+              <p className="text-[10px] uppercase tracking-wider text-[#666] mb-2">Google Calendar</p>
+              {selectedDayGoogle.length === 0 ? (
+                <p className="text-[11px] text-[#555]">No Google events.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {selectedDayGoogle.map((ev) => (
+                    <div
+                      key={ev.uid}
+                      className="flex items-start gap-2 bg-[#6b8cff]/[0.06] border border-[#6b8cff]/20 rounded-lg px-3 py-2"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#6b8cff] flex-shrink-0 mt-1.5" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] text-white truncate">{ev.title}</p>
+                        <p className="text-[9px] text-[#888] mt-0.5">{formatEventTime(ev.start, ev.allDay)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <p className="text-[10px] uppercase tracking-wider text-[#666] mb-2">Client work</p>
           {selectedDayItems.length === 0 ? (
             <p className="text-[11px] text-[#555]">No client work scheduled on this day.</p>
@@ -747,30 +816,15 @@ export default function MyCalendarPage() {
         </Card>
       )}
 
-      {/* Google Calendar embed */}
-      {savedGoogleSrc ? (
-        <Card className="p-0 overflow-hidden">
-          <div className="px-6 py-4 border-b border-white/[0.04]">
-            <p className="label-text">Google Calendar</p>
-            <p className="text-[10px] text-[#555] mt-1">Your personal Google Calendar, live-embedded.</p>
-          </div>
-          <div className="w-full bg-white/[0.01]" style={{ aspectRatio: '16/10', minHeight: 500 }}>
-            <iframe
-              src={savedGoogleSrc}
-              className="w-full h-full border-0"
-              title="Google Calendar"
-              loading="lazy"
-            />
-          </div>
-        </Card>
-      ) : (
-        <Card className="p-8 text-center">
+      {/* Empty state when Google isn't connected */}
+      {!savedGoogleIcsSrc && (
+        <Card className="p-6 sm:p-8 text-center">
           <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-white/[0.04] flex items-center justify-center">
             <span className="text-xl">📅</span>
           </div>
           <p className="text-[12px] text-white mb-2">Connect Google Calendar</p>
           <p className="text-[11px] text-[#666] mb-4 max-w-sm mx-auto leading-relaxed">
-            Embed your personal Google Calendar inside the workbench so you can see your meetings, calls, and client work all in one place.
+            Paste your Google Calendar secret iCal URL to overlay meetings, calls, and events directly on the grid above alongside your client work.
           </p>
           <Button variant="secondary" size="sm" onClick={() => setShowSettings(true)}>
             + Connect Google Calendar

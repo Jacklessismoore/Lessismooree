@@ -442,23 +442,28 @@ export async function updateBriefSLPT(id: string, subjectLine: string, previewTe
 }
 
 // ─── User Calendar Settings ───
-export async function getUserCalendarSettings(userId: string): Promise<{ google_embed_src: string } | null> {
+export async function getUserCalendarSettings(
+  userId: string
+): Promise<{ google_embed_src: string | null; google_ics_src: string | null } | null> {
   const { data, error } = await supabase()
     .from('user_calendar_settings')
-    .select('google_embed_src')
+    .select('google_embed_src, google_ics_src')
     .eq('user_id', userId)
     .maybeSingle();
   if (error) throw error;
   return data;
 }
 
-export async function saveUserCalendarSettings(userId: string, googleEmbedSrc: string): Promise<void> {
+export async function saveUserCalendarSettings(
+  userId: string,
+  updates: { google_embed_src?: string | null; google_ics_src?: string | null }
+): Promise<void> {
   const { error } = await supabase()
     .from('user_calendar_settings')
     .upsert(
       {
         user_id: userId,
-        google_embed_src: googleEmbedSrc,
+        ...updates,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'user_id' }
