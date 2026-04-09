@@ -222,7 +222,39 @@ export async function getCalendarItems(brandIds: string[], month: number, year: 
     .lt('date', endDate)
     .order('date');
   if (error) throw error;
-  return data ?? [];
+  return pruneOrphanedCalendarItems(data ?? []);
+}
+
+// Drop any calendar_items whose brief_history_id points to a deleted brief,
+// AND delete them from the DB so they don't reappear. This is a safety net
+// for older data that was created before the cascade FK was in place.
+async function pruneOrphanedCalendarItems(items: CalendarItem[]): Promise<CalendarItem[]> {
+  const linkedIds = Array.from(
+    new Set(items.map((i) => i.brief_history_id).filter((v): v is string => !!v))
+  );
+  if (linkedIds.length === 0) return items;
+
+  const { data: existing } = await supabase()
+    .from('brief_history')
+    .select('id')
+    .in('id', linkedIds);
+  const existingSet = new Set((existing ?? []).map((b: { id: string }) => b.id));
+
+  const orphanRowIds: string[] = [];
+  const kept: CalendarItem[] = [];
+  for (const item of items) {
+    if (item.brief_history_id && !existingSet.has(item.brief_history_id)) {
+      orphanRowIds.push(item.id);
+    } else {
+      kept.push(item);
+    }
+  }
+
+  if (orphanRowIds.length > 0) {
+    // Fire-and-forget cleanup; don't block the UI
+    supabase().from('calendar_items').delete().in('id', orphanRowIds).then(() => {}, () => {});
+  }
+  return kept;
 }
 
 export async function createCalendarItems(items: Omit<CalendarItem, 'id' | 'created_at' | 'brand' | 'strategy'>[]): Promise<CalendarItem[]> {
@@ -431,6 +463,59 @@ export async function saveUserCalendarSettings(userId: string, googleEmbedSrc: s
       },
       { onConflict: 'user_id' }
     );
+  if (error) throw error;
+}
+
+// ─── Personal Tasks ───
+export interface PersonalTask {
+  id: string;
+  user_id: string;
+  date: string;
+  title: string;
+  is_completed: boolean;
+  created_at: string;
+}
+
+export async function getPersonalTasks(userId: string, month: number, year: number): Promise<PersonalTask[]> {
+  const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+  const endMonth = month === 11 ? 0 : month + 1;
+  const endYear = month === 11 ? year + 1 : year;
+  const endDate = `${endYear}-${String(endMonth + 1).padStart(2, '0')}-01`;
+  const { data, error } = await supabase()
+    .from('personal_tasks')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('date', startDate)
+    .lt('date', endDate)
+    .order('date');
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createPersonalTask(task: {
+  user_id: string;
+  date: string;
+  title: string;
+}): Promise<PersonalTask> {
+  const { data, error } = await supabase()
+    .from('personal_tasks')
+    .insert(task)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function togglePersonalTask(id: string, isCompleted: boolean): Promise<void> {
+  const { error } = await supabase()
+    .from('personal_tasks')
+    .update({ is_completed: isCompleted })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+export async function deletePersonalTask(id: string): Promise<void> {
+  const { error } = await supabase().from('personal_tasks').delete().eq('id', id);
   if (error) throw error;
 }
 

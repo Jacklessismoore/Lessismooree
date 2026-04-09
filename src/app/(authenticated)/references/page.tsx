@@ -201,7 +201,7 @@ export default function ReferencesPage() {
       const q = searchQuery.toLowerCase();
       const matches = ref.title.toLowerCase().includes(q) ||
         ref.notes?.toLowerCase().includes(q) ||
-        ref.tags.some(t => t.toLowerCase().includes(q));
+        (Array.isArray(ref.tags) && ref.tags.some(t => t.toLowerCase().includes(q)));
       if (!matches) return false;
     }
     return true;

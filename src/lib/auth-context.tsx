@@ -185,7 +185,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const canAccess = (path: string): boolean => {
-    const allowedPaths = ROLE_ACCESS[role] || [];
+    if (!path) return false;
+    const allowedPaths = Array.isArray(ROLE_ACCESS[role]) ? ROLE_ACCESS[role] : [];
     return allowedPaths.some((p) => path === p || path.startsWith(p + '/'));
   };
 

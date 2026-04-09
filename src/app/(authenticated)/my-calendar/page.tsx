@@ -8,8 +8,26 @@ import { CalendarItem } from '@/lib/types';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
-import { getCalendarItems, getUserCalendarSettings, saveUserCalendarSettings } from '@/lib/db';
+import {
+  getCalendarItems,
+  getUserCalendarSettings,
+  saveUserCalendarSettings,
+  getPersonalTasks,
+  createPersonalTask,
+  togglePersonalTask,
+  deletePersonalTask,
+  PersonalTask,
+} from '@/lib/db';
+import { createClient } from '@/lib/supabase/client';
 import toast from 'react-hot-toast';
+
+type DayTask =
+  | { kind: 'non_negotiable'; id: string; title: string; date: string }
+  | { kind: 'custom'; task: PersonalTask };
+
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -66,14 +84,28 @@ function parseGoogleEmbed(input: string): string | null {
 }
 
 export default function MyCalendarPage() {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const { brands } = useApp();
+  const isAccountManager = role === 'admin' || role === 'account_manager';
 
   const today = useMemo(() => new Date(), []);
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [workItems, setWorkItems] = useState<CalendarItem[]>([]);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+
+  // Week view (mobile) — Monday-start week containing the given date
+  const getMondayOf = (d: Date): Date => {
+    const copy = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const dow = (copy.getDay() + 6) % 7; // Mon=0 … Sun=6
+    copy.setDate(copy.getDate() - dow);
+    return copy;
+  };
+  const [weekStart, setWeekStart] = useState<Date>(() => getMondayOf(new Date()));
+
+  // Personal tasks
+  const [personalTasks, setPersonalTasks] = useState<PersonalTask[]>([]);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
 
   // Google settings
   const [googleEmbedRaw, setGoogleEmbedRaw] = useState('');
@@ -92,13 +124,84 @@ export default function MyCalendarPage() {
       return;
     }
     try {
-      const items = await getCalendarItems(userBrandIds, viewMonth, viewYear);
-      // Filter to items with a real date (not unassigned queue items)
-      setWorkItems(items.filter((i) => !!i.date));
+      // Load the viewed month. If the viewed week straddles into an adjacent
+      // month (mobile week view), also load that month so nothing is missed.
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const monthsToLoad = new Set<string>([
+        `${viewYear}-${viewMonth}`,
+        `${weekStart.getFullYear()}-${weekStart.getMonth()}`,
+        `${weekEnd.getFullYear()}-${weekEnd.getMonth()}`,
+      ]);
+      const batches = await Promise.all(
+        Array.from(monthsToLoad).map((key) => {
+          const [y, m] = key.split('-').map(Number);
+          return getCalendarItems(userBrandIds, m, y);
+        })
+      );
+      const seen = new Set<string>();
+      const items = batches.flat().filter((i) => {
+        if (seen.has(i.id)) return false;
+        seen.add(i.id);
+        return true;
+      });
+      const dated = items.filter((i) => !!i.date);
+
+      // /my-calendar only shows work backed by a LIVE brief. We verify each
+      // linked brief_history_id against the brief_history table and drop
+      // anything whose brief is gone or was never linked. Orphan rows are
+      // also deleted from the DB so they stop coming back.
+      const linkedIds = Array.from(
+        new Set(dated.map((i) => i.brief_history_id).filter((v): v is string => !!v))
+      );
+      let existingSet = new Set<string>();
+      if (linkedIds.length > 0) {
+        const sb = createClient();
+        if (sb) {
+          const { data: existing } = await sb
+            .from('brief_history')
+            .select('id')
+            .in('id', linkedIds);
+          existingSet = new Set((existing ?? []).map((b: { id: string }) => b.id));
+        }
+      }
+
+      const live: CalendarItem[] = [];
+      const orphanRowIds: string[] = [];
+      for (const item of dated) {
+        if (item.brief_history_id && existingSet.has(item.brief_history_id)) {
+          live.push(item);
+        } else if (item.brief_history_id) {
+          // Linked but the brief is gone → real orphan, clean it up
+          orphanRowIds.push(item.id);
+        } else {
+          // No brief link at all → not shown on /my-calendar, but don't delete
+          // (could be a bare manual entry on the main calendar)
+        }
+      }
+
+      if (orphanRowIds.length > 0) {
+        const sb = createClient();
+        if (sb) {
+          sb.from('calendar_items').delete().in('id', orphanRowIds).then(() => {}, () => {});
+        }
+      }
+
+      setWorkItems(live);
     } catch (err) {
       console.error('Failed to load work items', err);
     }
-  }, [userBrandIds, viewMonth, viewYear]);
+  }, [userBrandIds, viewMonth, viewYear, weekStart]);
+
+  const loadPersonalTasks = useCallback(async () => {
+    if (!user) return;
+    try {
+      const tasks = await getPersonalTasks(user.id, viewMonth, viewYear);
+      setPersonalTasks(tasks);
+    } catch (err) {
+      console.error('Failed to load personal tasks', err);
+    }
+  }, [user, viewMonth, viewYear]);
 
   const loadSettings = useCallback(async () => {
     if (!user) return;
@@ -116,6 +219,10 @@ export default function MyCalendarPage() {
   useEffect(() => {
     loadWork();
   }, [loadWork]);
+
+  useEffect(() => {
+    loadPersonalTasks();
+  }, [loadPersonalTasks]);
 
   useEffect(() => {
     loadSettings();
@@ -142,8 +249,36 @@ export default function MyCalendarPage() {
   const goToday = () => {
     setViewYear(today.getFullYear());
     setViewMonth(today.getMonth());
+    setWeekStart(getMondayOf(new Date()));
     setSelectedDay(today);
   };
+
+  const goPrevWeek = () => {
+    const next = new Date(weekStart);
+    next.setDate(next.getDate() - 7);
+    setWeekStart(next);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+    setSelectedDay(null);
+  };
+  const goNextWeek = () => {
+    const next = new Date(weekStart);
+    next.setDate(next.getDate() + 7);
+    setWeekStart(next);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+    setSelectedDay(null);
+  };
+
+  const weekDays = useMemo(() => {
+    const days: Date[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(d.getDate() + i);
+      days.push(d);
+    }
+    return days;
+  }, [weekStart]);
 
   const handleSaveSettings = async () => {
     if (!user) return;
@@ -178,18 +313,81 @@ export default function MyCalendarPage() {
     return map;
   }, [workItems]);
 
-  const selectedDayItems = selectedDay
-    ? workByDay[`${selectedDay.getFullYear()}-${String(selectedDay.getMonth() + 1).padStart(2, '0')}-${String(selectedDay.getDate()).padStart(2, '0')}`] || []
-    : [];
+  // Auto-generated non-negotiables: "Send over a win" every Mon/Fri for account managers
+  const tasksByDay = useMemo(() => {
+    const map: Record<string, DayTask[]> = {};
+    if (isAccountManager) {
+      for (const cell of cells) {
+        if (!cell) continue;
+        const dow = cell.getDay(); // 0=Sun … 6=Sat
+        if (dow === 1 || dow === 5) {
+          const key = ymd(cell);
+          if (!map[key]) map[key] = [];
+          map[key].push({
+            kind: 'non_negotiable',
+            id: `nn-win-${key}`,
+            title: 'Send over a win',
+            date: key,
+          });
+        }
+      }
+    }
+    for (const t of personalTasks) {
+      const key = t.date.slice(0, 10);
+      if (!map[key]) map[key] = [];
+      map[key].push({ kind: 'custom', task: t });
+    }
+    return map;
+  }, [cells, isAccountManager, personalTasks]);
+
+  const handleAddTask = async () => {
+    if (!user || !selectedDay || !newTaskTitle.trim()) return;
+    try {
+      const created = await createPersonalTask({
+        user_id: user.id,
+        date: ymd(selectedDay),
+        title: newTaskTitle.trim(),
+      });
+      setPersonalTasks((prev) => [...prev, created]);
+      setNewTaskTitle('');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add task');
+    }
+  };
+
+  const handleToggleTask = async (task: PersonalTask) => {
+    const next = !task.is_completed;
+    setPersonalTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, is_completed: next } : t)));
+    try {
+      await togglePersonalTask(task.id, next);
+    } catch {
+      setPersonalTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, is_completed: task.is_completed } : t)));
+      toast.error('Failed to update task');
+    }
+  };
+
+  const handleDeleteTask = async (task: PersonalTask) => {
+    setPersonalTasks((prev) => prev.filter((t) => t.id !== task.id));
+    try {
+      await deletePersonalTask(task.id);
+    } catch {
+      toast.error('Failed to delete task');
+      loadPersonalTasks();
+    }
+  };
+
+  const selectedDayKey = selectedDay ? ymd(selectedDay) : '';
+  const selectedDayItems = selectedDay ? workByDay[selectedDayKey] || [] : [];
+  const selectedDayTasks = selectedDay ? tasksByDay[selectedDayKey] || [] : [];
 
   return (
     <div className="max-w-5xl mx-auto">
       <PageHeader
         title="MY CALENDAR"
-        subtitle={`${user?.email || 'Your personal calendar'} — client work overlaid with your Google Calendar`}
+        subtitle="Client work + your Google Calendar, in one view."
         actions={
           <Button variant="secondary" size="sm" onClick={() => setShowSettings((s) => !s)}>
-            {showSettings ? 'Close settings' : savedGoogleSrc ? 'Google synced' : '+ Connect Google'}
+            {showSettings ? 'Close' : savedGoogleSrc ? 'Google synced' : '+ Google'}
           </Button>
         }
       />
@@ -234,9 +432,46 @@ export default function MyCalendarPage() {
         </Card>
       )}
 
-      {/* Month navigation */}
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <div className="flex items-center gap-2">
+      {/* Navigation — week on mobile, month on desktop */}
+      <div className="flex sm:hidden items-center justify-between mb-4 gap-2">
+        <p className="heading text-base text-white truncate">
+          {(() => {
+            const we = new Date(weekStart);
+            we.setDate(we.getDate() + 6);
+            const sameMonth = weekStart.getMonth() === we.getMonth();
+            const startLabel = `${weekStart.getDate()} ${MONTH_NAMES[weekStart.getMonth()].slice(0, 3)}`;
+            const endLabel = sameMonth
+              ? `${we.getDate()}`
+              : `${we.getDate()} ${MONTH_NAMES[we.getMonth()].slice(0, 3)}`;
+            return `${startLabel} – ${endLabel}`;
+          })()}
+        </p>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <button
+            onClick={goPrevWeek}
+            className="chip-press w-8 h-8 rounded-xl bg-white/[0.03] border border-white/[0.08] text-[#888] hover:text-white flex items-center justify-center"
+            aria-label="Previous week"
+          >
+            ←
+          </button>
+          <button
+            onClick={goNextWeek}
+            className="chip-press w-8 h-8 rounded-xl bg-white/[0.03] border border-white/[0.08] text-[#888] hover:text-white flex items-center justify-center"
+            aria-label="Next week"
+          >
+            →
+          </button>
+          <Button variant="secondary" size="sm" onClick={goToday}>
+            Today
+          </Button>
+        </div>
+      </div>
+
+      <div className="hidden sm:flex items-center justify-between mb-4 gap-2">
+        <p className="heading text-xl text-white truncate">
+          {MONTH_NAMES[viewMonth]} {viewYear}
+        </p>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           <button
             onClick={goPrevMonth}
             className="chip-press w-9 h-9 rounded-xl bg-white/[0.03] border border-white/[0.08] text-[#888] hover:text-white flex items-center justify-center"
@@ -255,38 +490,111 @@ export default function MyCalendarPage() {
             Today
           </Button>
         </div>
-        <p className="heading text-xl text-white">
-          {MONTH_NAMES[viewMonth]} {viewYear}
-        </p>
-        <div className="w-[130px]" />
       </div>
 
-      {/* Month grid — client work overlay */}
-      <Card className="p-4 mb-6">
-        <div className="grid grid-cols-7 gap-1 mb-2">
+      {/* Mobile: vertical week view with full-width day cards */}
+      <div className="sm:hidden mb-6 space-y-2">
+        {weekDays.map((day) => {
+          const key = ymd(day);
+          const dayItems = workByDay[key] || [];
+          const dayTasks = tasksByDay[key] || [];
+          const isToday = isSameDay(day, today);
+          const isSelected = selectedDay && isSameDay(day, selectedDay);
+          const hasNonNegotiable = dayTasks.some((t) => t.kind === 'non_negotiable');
+          return (
+            <button
+              key={key}
+              onClick={() => setSelectedDay(day)}
+              className={`w-full text-left chip-press rounded-xl p-3 border transition-all ${
+                isSelected
+                  ? 'bg-white/[0.06] border-white/25'
+                  : isToday
+                  ? 'bg-white/[0.03] border-white/15'
+                  : 'bg-white/[0.02] border-white/[0.05]'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] uppercase tracking-wider text-[#666] font-semibold">
+                    {DAY_HEADERS[(day.getDay() + 6) % 7]}
+                  </span>
+                  <span
+                    className={`text-[15px] font-semibold ${
+                      isToday ? 'text-white' : 'text-[#ccc]'
+                    }`}
+                  >
+                    {day.getDate()}
+                  </span>
+                  {isToday && (
+                    <span className="text-[9px] uppercase tracking-wider text-amber-300">
+                      Today
+                    </span>
+                  )}
+                </div>
+                {hasNonNegotiable && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                )}
+              </div>
+              {dayItems.length === 0 && dayTasks.length === 0 ? (
+                <p className="text-[10px] text-[#444]">Nothing scheduled</p>
+              ) : (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {dayItems.slice(0, 3).map((item) => (
+                    <span
+                      key={item.id}
+                      className="text-[10px] text-[#aaa] flex items-center gap-1"
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full"
+                        style={{ backgroundColor: item.brand?.color || '#666' }}
+                      />
+                      {item.brand?.name}
+                    </span>
+                  ))}
+                  {dayItems.length > 3 && (
+                    <span className="text-[9px] text-[#555]">+{dayItems.length - 3} more</span>
+                  )}
+                  {dayTasks.length > 0 && (
+                    <span className="text-[10px] text-[#888]">
+                      · {dayTasks.length} task{dayTasks.length === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Desktop: month grid — client work overlay */}
+      <Card className="hidden sm:block p-2 sm:p-4 mb-6">
+        <div className="grid grid-cols-7 gap-0.5 sm:gap-1 mb-2">
           {DAY_HEADERS.map((d) => (
             <div
               key={d}
-              className="text-[9px] uppercase tracking-wider text-[#555] font-semibold text-center py-1"
+              className="text-[8px] sm:text-[9px] uppercase tracking-wider text-[#555] font-semibold text-center py-1"
             >
-              {d}
+              <span className="sm:hidden">{d[0]}</span>
+              <span className="hidden sm:inline">{d}</span>
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-7 gap-1">
+        <div className="grid grid-cols-7 gap-0.5 sm:gap-1">
           {cells.map((cell, i) => {
             if (!cell) {
               return <div key={`empty-${i}`} className="aspect-square" />;
             }
-            const key = `${cell.getFullYear()}-${String(cell.getMonth() + 1).padStart(2, '0')}-${String(cell.getDate()).padStart(2, '0')}`;
+            const key = ymd(cell);
             const dayItems = workByDay[key] || [];
+            const dayTasks = tasksByDay[key] || [];
+            const hasNonNegotiable = dayTasks.some((t) => t.kind === 'non_negotiable');
             const isToday = isSameDay(cell, today);
             const isSelected = selectedDay && isSameDay(cell, selectedDay);
             return (
               <button
                 key={key}
                 onClick={() => setSelectedDay(cell)}
-                className={`aspect-square rounded-lg flex flex-col items-start p-1.5 transition-all text-left chip-press ${
+                className={`relative aspect-square rounded-md sm:rounded-lg flex flex-col items-start p-1 sm:p-1.5 transition-all text-left chip-press ${
                   isSelected
                     ? 'bg-white/[0.08] border border-white/25'
                     : isToday
@@ -295,13 +603,19 @@ export default function MyCalendarPage() {
                 }`}
               >
                 <span
-                  className={`text-[10px] font-semibold ${
+                  className={`text-[11px] sm:text-[10px] font-semibold ${
                     isToday ? 'text-white' : 'text-[#999]'
                   }`}
                 >
                   {cell.getDate()}
                 </span>
-                {dayItems.length > 0 && (
+                {hasNonNegotiable && (
+                  <span
+                    className="absolute top-0.5 right-0.5 sm:top-1 sm:right-1 w-1.5 h-1.5 rounded-full bg-amber-400"
+                    title="Non-negotiable"
+                  />
+                )}
+                {(dayItems.length > 0 || dayTasks.length > 0) && (
                   <div className="mt-auto w-full flex flex-col gap-0.5 overflow-hidden">
                     {dayItems.slice(0, 2).map((item) => (
                       <div
@@ -310,8 +624,13 @@ export default function MyCalendarPage() {
                         style={{ backgroundColor: item.brand?.color || '#666' }}
                       />
                     ))}
+                    {dayTasks.length > 0 && (
+                      <span className="hidden sm:inline text-[8px] text-[#999] truncate">
+                        {dayTasks.length} task{dayTasks.length === 1 ? '' : 's'}
+                      </span>
+                    )}
                     {dayItems.length > 2 && (
-                      <span className="text-[7px] text-[#666]">+{dayItems.length - 2}</span>
+                      <span className="hidden sm:inline text-[7px] text-[#666]">+{dayItems.length - 2}</span>
                     )}
                   </div>
                 )}
@@ -323,10 +642,80 @@ export default function MyCalendarPage() {
 
       {/* Selected day detail */}
       {selectedDay && (
-        <Card className="p-6 mb-6 animate-fade">
+        <Card className="p-4 sm:p-6 mb-6 animate-fade">
           <p className="label-text mb-3">
             {selectedDay.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}
           </p>
+          {/* Tasks (non-negotiables + custom) */}
+          <div className="mb-4">
+            <p className="text-[10px] uppercase tracking-wider text-[#666] mb-2">Tasks</p>
+            {selectedDayTasks.length === 0 ? (
+              <p className="text-[11px] text-[#555] mb-2">No tasks for this day.</p>
+            ) : (
+              <div className="space-y-1.5 mb-2">
+                {selectedDayTasks.map((t) =>
+                  t.kind === 'non_negotiable' ? (
+                    <div
+                      key={t.id}
+                      className="flex items-center gap-2 bg-amber-400/[0.06] border border-amber-400/20 rounded-lg px-3 py-2"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                      <span className="text-[11px] text-white flex-1">{t.title}</span>
+                      <span className="text-[9px] uppercase tracking-wider text-amber-400/70">Non-negotiable</span>
+                    </div>
+                  ) : (
+                    <div
+                      key={t.task.id}
+                      className="flex items-center gap-2 bg-white/[0.02] border border-white/[0.05] rounded-lg px-3 py-2 group"
+                    >
+                      <button
+                        onClick={() => handleToggleTask(t.task)}
+                        className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
+                          t.task.is_completed
+                            ? 'bg-white/20 border-white/40'
+                            : 'border-white/20 hover:border-white/40'
+                        }`}
+                        aria-label={t.task.is_completed ? 'Mark incomplete' : 'Mark complete'}
+                      >
+                        {t.task.is_completed && <span className="text-[9px] text-white">✓</span>}
+                      </button>
+                      <span
+                        className={`text-[11px] flex-1 ${
+                          t.task.is_completed ? 'text-[#555] line-through' : 'text-white'
+                        }`}
+                      >
+                        {t.task.title}
+                      </span>
+                      <button
+                        onClick={() => handleDeleteTask(t.task)}
+                        className="text-[#555] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity text-[11px]"
+                        aria-label="Delete task"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+            <div className="flex gap-2 items-stretch">
+              <input
+                type="text"
+                value={newTaskTitle}
+                onChange={(e) => setNewTaskTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAddTask();
+                }}
+                placeholder="Add a task…"
+                className="input-polish flex-1 min-w-0 bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white placeholder:text-[#444]"
+              />
+              <Button size="sm" onClick={handleAddTask} disabled={!newTaskTitle.trim()} className="flex-shrink-0">
+                Add
+              </Button>
+            </div>
+          </div>
+
+          <p className="text-[10px] uppercase tracking-wider text-[#666] mb-2">Client work</p>
           {selectedDayItems.length === 0 ? (
             <p className="text-[11px] text-[#555]">No client work scheduled on this day.</p>
           ) : (

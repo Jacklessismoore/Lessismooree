@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { Sidebar } from '@/components/sidebar';
+import { ReviewBanner } from '@/components/review-banner';
 
 export default function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
   const { loading, canAccess, isPendingRole, signOut } = useAuth();
@@ -98,6 +99,7 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
         }`}
       >
         <div key={pathname} className="route-fade">
+          <ReviewBanner />
           {children}
         </div>
       </main>
