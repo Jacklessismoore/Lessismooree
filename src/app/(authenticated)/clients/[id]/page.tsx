@@ -1,17 +1,46 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useApp } from '@/lib/app-context';
-import { getBrand, createBrand, updateBrand } from '@/lib/db';
+import { getBrand, createBrand, updateBrand, getBrandComments } from '@/lib/db';
 import { slugify } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { BasicInfoStep, VoiceRulesStep, DocumentsStep, FormState } from '@/components/clients/client-form-steps';
+import { BrandComment } from '@/lib/types';
 import toast from 'react-hot-toast';
 
-const STEPS = ['Basics', 'Voice & Rules', 'Documents'];
+const STEPS = ['Basics', 'Voice & Rules', 'Documents', 'Comments'];
+
+function monthKey(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  } catch {
+    return '0000-00';
+  }
+}
+
+function monthLabel(key: string): string {
+  const [y, m] = key.split('-').map(Number);
+  if (!y || !m) return key;
+  return new Date(y, m - 1, 1).toLocaleDateString('en-AU', { month: 'long', year: 'numeric' });
+}
+
+function groupByMonth(comments: BrandComment[]) {
+  const groups: Record<string, BrandComment[]> = {};
+  for (const c of comments) {
+    const k = monthKey(c.created_at);
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(c);
+  }
+  return Object.keys(groups)
+    .sort((a, b) => b.localeCompare(a))
+    .map((k) => ({ key: k, label: monthLabel(k), items: groups[k] }));
+}
 
 export default function ClientFormPage() {
   const params = useParams();
@@ -22,6 +51,26 @@ export default function ClientFormPage() {
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(!isNew);
+
+  // Client comments loaded lazily for the Comments step
+  const [comments, setComments] = useState<BrandComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const loadComments = useCallback(async () => {
+    if (isNew || !params.id) return;
+    setCommentsLoading(true);
+    try {
+      const data = await getBrandComments(params.id as string);
+      setComments(data);
+    } catch {
+      // non-critical
+    } finally {
+      setCommentsLoading(false);
+    }
+  }, [isNew, params.id]);
+
+  useEffect(() => {
+    if (step === 3) loadComments();
+  }, [step, loadComments]);
 
   const [form, setForm] = useState<FormState>({
     name: '',
@@ -172,6 +221,81 @@ export default function ClientFormPage() {
         {step === 2 && (
           <DocumentsStep form={form} onChange={onChange} />
         )}
+        {step === 3 && (
+          <div>
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <div>
+                <p className="label-text">Client comments by month</p>
+                <p className="text-[10px] text-[#555] mt-1">
+                  Notes from calls, DMs, meetings — grouped by the month they were added.
+                </p>
+              </div>
+              {!isNew && (
+                <Link href={`/client-comments`}>
+                  <Button variant="secondary" size="sm">
+                    + Add comment
+                  </Button>
+                </Link>
+              )}
+            </div>
+            {isNew ? (
+              <div className="text-center py-12">
+                <p className="text-[11px] text-[#555]">
+                  Save the client first, then come back to add comments.
+                </p>
+              </div>
+            ) : commentsLoading ? (
+              <p className="text-[11px] text-[#555] text-center py-8">Loading…</p>
+            ) : comments.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-[11px] text-[#555] mb-3">No comments yet for this client.</p>
+                <Link href={`/client-comments`}>
+                  <Button variant="secondary" size="sm">
+                    Add the first comment
+                  </Button>
+                </Link>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {groupByMonth(comments).map((group) => (
+                  <div key={group.key}>
+                    <div className="flex items-center gap-3 mb-3">
+                      <p className="text-[11px] font-semibold text-white uppercase tracking-wider">
+                        {group.label}
+                      </p>
+                      <div className="flex-1 h-px bg-white/[0.04]" />
+                      <span className="text-[9px] text-[#444]">
+                        {group.items.length} note{group.items.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {group.items.map((c) => (
+                        <div
+                          key={c.id}
+                          className="bg-white/[0.02] border border-white/[0.05] rounded-xl p-3"
+                        >
+                          <p className="text-[9px] uppercase tracking-wider text-[#666] mb-1">
+                            {new Date(c.created_at).toLocaleDateString('en-AU', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric',
+                            })}
+                            {c.author_email && (
+                              <span className="text-[#444] normal-case"> · {c.author_email}</span>
+                            )}
+                          </p>
+                          <p className="text-[11px] text-[#e5e5e5] leading-relaxed whitespace-pre-wrap">
+                            {c.content}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex justify-between mt-6 pt-4 border-t border-[#1A1A1A]">
           <div>
@@ -182,7 +306,7 @@ export default function ClientFormPage() {
             )}
           </div>
           <div className="flex gap-2">
-            {step < 2 ? (
+            {step < STEPS.length - 1 ? (
               <Button size="sm" onClick={() => setStep(s => s + 1)}>
                 Next
               </Button>

@@ -345,109 +345,6 @@ export function VoiceRulesStep({
 }
 
 // ─── Step 3: Documents & Context (with AI onboarding notes) ───
-// ─── Fathom Notetaker Upload ───
-function FathomUpload({ form, onChange }: { form: FormState; onChange: (updates: Partial<FormState>) => void }) {
-  const [fathomUrl, setFathomUrl] = useState('');
-  const [analyzing, setAnalyzing] = useState(false);
-
-  const handleAnalyzeFathom = async () => {
-    if (!fathomUrl.trim()) { toast.error('Paste a Fathom link first'); return; }
-    setAnalyzing(true);
-    try {
-      // Fetch the Fathom page content
-      const fetchRes = await fetch('/api/fetch-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: fathomUrl }),
-      });
-      const fetchData = await fetchRes.json();
-
-      // Use the page title/content to extract client insights
-      const analyzeRes = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [{
-            role: 'user',
-            content: `Analyse this Fathom call transcript/notes page and extract any useful client information for an email marketing agency.
-
-URL: ${fathomUrl}
-Page title: ${fetchData.title || 'Unknown'}
-${fetchData.html ? `Content preview: ${fetchData.html.slice(0, 3000)}` : ''}
-
-Current client notes: ${form.notes || 'None'}
-Current voice: ${form.voice || 'Not set'}
-Current rules: ${form.rules || 'Not set'}
-
-Extract any new information about:
-- Brand voice, tone, or communication style mentioned in the call
-- Specific rules or restrictions the client mentioned (things to avoid, requirements)
-- New audience segments discussed
-- Products or collections mentioned
-- Action items or decisions made
-- Any other relevant context for email marketing
-
-Return ONLY a JSON object:
-{
-  "newNotes": "Concise summary of key takeaways from the call relevant to email marketing. Include action items, decisions, and any new information about the brand.",
-  "voiceUpdates": "Any new voice/tone insights (or empty string if none)",
-  "ruleUpdates": "Any new rules or restrictions mentioned (or empty string if none)"
-}`
-          }],
-        }),
-      });
-      const analyzeData = await analyzeRes.json();
-
-      if (analyzeData.message) {
-        try {
-          const jsonMatch = analyzeData.message.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            // Append new notes to existing notes
-            if (parsed.newNotes) {
-              const existingNotes = form.notes || '';
-              const separator = existingNotes ? '\n\n---\n\n' : '';
-              const fathomHeader = `📞 Fathom Call Notes (${new Date().toLocaleDateString('en-GB')}):\n`;
-              onChange({ notes: existingNotes + separator + fathomHeader + parsed.newNotes });
-            }
-            if (parsed.voiceUpdates && !form.voice) {
-              onChange({ voice: parsed.voiceUpdates });
-            }
-            if (parsed.ruleUpdates && !form.rules) {
-              onChange({ rules: parsed.ruleUpdates });
-            }
-            toast.success('Call notes extracted and added');
-          }
-        } catch {
-          toast.error('Could not parse call notes');
-        }
-      }
-    } catch {
-      toast.error('Failed to analyse Fathom link');
-    }
-    setAnalyzing(false);
-  };
-
-  return (
-    <div>
-      <Label>Fathom Call Notes</Label>
-      <p className="text-[9px] text-[#444] mb-2">Paste a Fathom notetaker link to extract client insights</p>
-      <div className="flex gap-2">
-        <input
-          type="url"
-          value={fathomUrl}
-          onChange={e => setFathomUrl(e.target.value)}
-          placeholder="https://fathom.video/..."
-          className="flex-1 bg-[#0E0E0E] border border-[#252525] rounded-md px-3 py-2 text-xs text-white placeholder:text-[#555] focus:outline-none focus:border-white/20"
-        />
-        <Button size="sm" variant="secondary" onClick={handleAnalyzeFathom} loading={analyzing}>
-          Extract
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Brand AVOID uploader — wording, claims, taboos to never include in copy ───
 function AvoidUploader({
   form,
@@ -730,9 +627,6 @@ export function DocumentsStep({
           </Button>
         </Card>
       )}
-
-      {/* Fathom Notetaker */}
-      <FathomUpload form={form} onChange={onChange} />
 
       {/* Notes */}
       <Textarea
