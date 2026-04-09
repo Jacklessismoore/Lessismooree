@@ -351,9 +351,10 @@ export default function TeamPage() {
 }
 
 function UserRolesSection() {
-  const { role: currentUserRole } = useAuth();
+  const { role: currentUserRole, user: currentUser } = useAuth();
   const [userRoles, setUserRoles] = useState<{ id: string; user_id: string; email: string; role: UserRole }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const supabase = createClient();
 
   const loadRoles = useCallback(async () => {
@@ -376,8 +377,36 @@ function UserRolesSection() {
     }
   };
 
-  // Only admins can manage user roles
-  if (currentUserRole !== 'admin') return null;
+  const deleteUser = async (userId: string, email: string) => {
+    if (userId === currentUser?.id) {
+      toast.error("You can't delete yourself");
+      return;
+    }
+    if (!confirm(`Permanently delete "${email || 'this user'}"? This removes their account and cannot be undone.`)) return;
+    setDeletingId(userId);
+    try {
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Delete failed');
+      toast.success('User deleted');
+      await loadRoles();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // Admin AND account_manager can see the section.
+  // Only admins can change roles — account managers get a read-only label.
+  // Both can delete users (except themselves).
+  if (currentUserRole !== 'admin' && currentUserRole !== 'account_manager') return null;
+
+  const canEditRoles = currentUserRole === 'admin';
 
   return (
     <Card className="mt-6">
@@ -388,26 +417,48 @@ function UserRolesSection() {
         <p className="text-[10px] text-[#444]">No users found. Users appear here after they sign in.</p>
       ) : (
         <div className="space-y-2">
-          {userRoles.map(ur => (
-            <div key={ur.id} className="flex items-center justify-between py-2 px-3 bg-black/30 rounded">
-              <div>
-                <span className="text-sm text-white">{ur.email || 'No email'}</span>
-                <span className="text-xs text-[#555] ml-2">{ROLE_LABELS[ur.role as UserRole] || ur.role}</span>
+          {userRoles.map(ur => {
+            const isSelf = ur.user_id === currentUser?.id;
+            const isDeleting = deletingId === ur.user_id;
+            return (
+              <div key={ur.id} className="flex items-center justify-between gap-3 py-2 px-3 bg-black/30 rounded flex-wrap">
+                <div className="min-w-0">
+                  <span className="text-sm text-white">{ur.email || 'No email'}</span>
+                  {isSelf && (
+                    <span className="text-[9px] text-[#444] ml-2 uppercase tracking-wider">you</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {canEditRoles ? (
+                    <select
+                      value={ur.role}
+                      onChange={e => updateRole(ur.user_id, e.target.value as UserRole)}
+                      className="bg-black/50 border border-white/[0.06] rounded px-2 py-1 text-[10px] text-[#999] focus:outline-none focus:border-white/20 appearance-none cursor-pointer"
+                    >
+                      <option value="none">No role</option>
+                      <option value="admin">Admin</option>
+                      <option value="account_manager">Account Manager</option>
+                      <option value="designer">Designer</option>
+                      <option value="klaviyo_tech">Klaviyo Technician</option>
+                      <option value="scheduler">Scheduler</option>
+                    </select>
+                  ) : (
+                    <span className="text-[10px] text-[#888] uppercase tracking-wider px-2 py-1 bg-black/30 border border-white/[0.04] rounded">
+                      {ROLE_LABELS[ur.role as UserRole] || ur.role}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => deleteUser(ur.user_id, ur.email)}
+                    disabled={isSelf || isDeleting}
+                    title={isSelf ? "You can't delete yourself" : 'Delete user'}
+                    className="text-[10px] uppercase tracking-wider text-[#555] hover:text-red-400 disabled:opacity-30 disabled:hover:text-[#555] disabled:cursor-not-allowed transition-colors px-2 py-1"
+                  >
+                    {isDeleting ? '…' : 'Delete'}
+                  </button>
+                </div>
               </div>
-              <select
-                value={ur.role}
-                onChange={e => updateRole(ur.user_id, e.target.value as UserRole)}
-                className="bg-black/50 border border-white/[0.06] rounded px-2 py-1 text-[10px] text-[#999] focus:outline-none focus:border-white/20 appearance-none cursor-pointer"
-              >
-                <option value="none">No role</option>
-                <option value="admin">Admin</option>
-                <option value="account_manager">Account Manager</option>
-                <option value="designer">Designer</option>
-                <option value="klaviyo_tech">Klaviyo Technician</option>
-                <option value="scheduler">Scheduler</option>
-              </select>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </Card>
