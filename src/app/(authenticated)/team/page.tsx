@@ -376,8 +376,8 @@ function UserRolesSection() {
     }
   };
 
-  // Only account managers can see this
-  if (currentUserRole !== 'account_manager') return null;
+  // Only admins can manage user roles
+  if (currentUserRole !== 'admin') return null;
 
   return (
     <Card className="mt-6">
@@ -399,6 +399,8 @@ function UserRolesSection() {
                 onChange={e => updateRole(ur.user_id, e.target.value as UserRole)}
                 className="bg-black/50 border border-white/[0.06] rounded px-2 py-1 text-[10px] text-[#999] focus:outline-none focus:border-white/20 appearance-none cursor-pointer"
               >
+                <option value="none">No role</option>
+                <option value="admin">Admin</option>
                 <option value="account_manager">Account Manager</option>
                 <option value="designer">Designer</option>
                 <option value="klaviyo_tech">Klaviyo Technician</option>

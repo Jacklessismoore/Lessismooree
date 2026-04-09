@@ -9,7 +9,7 @@ import toast from 'react-hot-toast';
 const SCAN_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
 export default function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
-  const { loading, canAccess, needsRoleSelection, setRole } = useAuth();
+  const { loading, canAccess, isPendingRole, signOut } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -127,7 +127,7 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
     );
   }
 
-  if (needsRoleSelection) {
+  if (isPendingRole) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 relative">
         <div className="bg-mesh" />
@@ -146,32 +146,21 @@ export default function AuthenticatedLayout({ children }: { children: React.Reac
             <p className="text-[10px] text-[#444] uppercase tracking-[0.2em]">Email Workbench</p>
           </div>
 
-          <div className="glass-card rounded-2xl p-7">
-            <h2 className="heading text-xs text-center mb-2">Welcome</h2>
-            <p className="text-[11px] text-[#555] text-center mb-6">Select your role to get started</p>
-
-            <div className="space-y-2">
-              {([
-                { role: 'account_manager' as const, label: 'Account Manager', desc: 'Full access to all features', icon: '👑' },
-                { role: 'designer' as const, label: 'Designer', desc: 'Create, Calendar, Briefs & Design Queue', icon: '🎨' },
-                { role: 'klaviyo_tech' as const, label: 'Klaviyo Technician', desc: 'Calendar, Briefs & Reports', icon: '⚙️' },
-                { role: 'scheduler' as const, label: 'Scheduler', desc: 'Calendar & Briefs', icon: '📅' },
-              ]).map(option => (
-                <button
-                  key={option.role}
-                  onClick={() => setRole(option.role)}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:border-white/15 hover:bg-white/[0.05] transition-all text-left group"
-                >
-                  <div className="w-9 h-9 rounded-lg bg-white/[0.04] flex items-center justify-center flex-shrink-0 group-hover:bg-white/[0.08] transition-colors">
-                    <span className="text-sm">{option.icon}</span>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-semibold text-white uppercase tracking-wider">{option.label}</p>
-                    <p className="text-[9px] text-[#555]">{option.desc}</p>
-                  </div>
-                </button>
-              ))}
+          <div className="glass-card rounded-2xl p-7 text-center">
+            <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-white/[0.04] border border-white/[0.06] flex items-center justify-center">
+              <div className="w-2 h-2 rounded-full bg-amber-400 glow-dot" />
             </div>
+            <h2 className="heading text-sm mb-2">Pending Role</h2>
+            <p className="text-[11px] text-[#888] leading-relaxed mb-6">
+              Your account is waiting for an admin to assign your role. Until then you can&apos;t access the workbench.
+              Check back shortly or ping an admin to set you up.
+            </p>
+            <button
+              onClick={signOut}
+              className="w-full chip-press bg-white/[0.03] border border-white/[0.06] hover:border-white/15 hover:bg-white/[0.05] rounded-xl py-2.5 text-[11px] uppercase tracking-wider font-medium text-[#888] hover:text-white transition-all"
+            >
+              Sign out
+            </button>
           </div>
         </div>
       </div>
