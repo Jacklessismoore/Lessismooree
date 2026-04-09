@@ -91,6 +91,8 @@ export default function MyCalendarPage() {
   // Personal tasks
   const [personalTasks, setPersonalTasks] = useState<PersonalTask[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskTime, setNewTaskTime] = useState(''); // "HH:MM"
+  const [newTaskEod, setNewTaskEod] = useState(false);
 
   // Google settings (ICS for inline overlay)
   const [googleIcsRaw, setGoogleIcsRaw] = useState('');
@@ -393,12 +395,55 @@ export default function MyCalendarPage() {
         user_id: user.id,
         date: ymd(selectedDay),
         title: newTaskTitle.trim(),
+        start_time: newTaskTime ? `${newTaskTime}:00` : null,
+        is_eod: newTaskEod,
       });
       setPersonalTasks((prev) => [...prev, created]);
       setNewTaskTitle('');
+      setNewTaskTime('');
+      setNewTaskEod(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to add task');
     }
+  };
+
+  // Build a Google Calendar "create event" URL for a given task. Opens in a
+  // new tab with fields pre-filled; user just hits Save in Google.
+  const googleCalendarLinkForTask = (task: PersonalTask): string => {
+    const date = task.date.replace(/-/g, ''); // YYYYMMDD
+    let dates: string;
+    if (task.is_eod) {
+      // All-day event
+      const d = new Date(task.date);
+      const next = new Date(d);
+      next.setDate(next.getDate() + 1);
+      const nextStr = `${next.getFullYear()}${String(next.getMonth() + 1).padStart(2, '0')}${String(next.getDate()).padStart(2, '0')}`;
+      dates = `${date}/${nextStr}`;
+    } else if (task.start_time) {
+      // Timed event — default 30 min duration
+      const [h, m] = task.start_time.split(':').map(Number);
+      const startLocal = new Date(task.date);
+      startLocal.setHours(h, m, 0, 0);
+      const endLocal = new Date(startLocal);
+      endLocal.setMinutes(endLocal.getMinutes() + 30);
+      const fmt = (d: Date) =>
+        `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}00`;
+      dates = `${fmt(startLocal)}/${fmt(endLocal)}`;
+    } else {
+      // All-day fallback
+      const d = new Date(task.date);
+      const next = new Date(d);
+      next.setDate(next.getDate() + 1);
+      const nextStr = `${next.getFullYear()}${String(next.getMonth() + 1).padStart(2, '0')}${String(next.getDate()).padStart(2, '0')}`;
+      dates = `${date}/${nextStr}`;
+    }
+    const params = new URLSearchParams({
+      action: 'TEMPLATE',
+      text: task.title,
+      dates,
+      details: task.is_eod ? 'Complete by end of day' : '',
+    });
+    return `https://calendar.google.com/calendar/render?${params.toString()}`;
   };
 
   const handleToggleTask = async (task: PersonalTask) => {
@@ -590,6 +635,7 @@ export default function MyCalendarPage() {
               </div>
               {(() => {
                 const dayGoogle = googleByDay[key] || [];
+                const customTasks = dayTasks.filter((t) => t.kind === 'custom');
                 const nothing = dayItems.length === 0 && dayTasks.length === 0 && dayGoogle.length === 0;
                 if (nothing) return <p className="text-[10px] text-[#444]">Nothing scheduled</p>;
                 return (
@@ -606,11 +652,23 @@ export default function MyCalendarPage() {
                         <span className="truncate">{formatEventTime(ev.start, ev.allDay)} · {ev.title}</span>
                       </span>
                     ))}
-                    {(dayItems.length + dayGoogle.length > 4 || dayTasks.length > 0) && (
+                    {customTasks.slice(0, 2).map((t) => {
+                      if (t.kind !== 'custom') return null;
+                      const timeLabel = t.task.is_eod
+                        ? 'EOD'
+                        : t.task.start_time
+                        ? new Date(`2000-01-01T${t.task.start_time}`).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', hour12: true })
+                        : null;
+                      return (
+                        <span key={t.task.id} className="text-[10px] text-[#fbbf24] flex items-center gap-1.5 truncate">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                          <span className="truncate">{timeLabel ? `${timeLabel} · ` : ''}{t.task.title}</span>
+                        </span>
+                      );
+                    })}
+                    {(dayItems.length + dayGoogle.length + customTasks.length > 5) && (
                       <span className="text-[9px] text-[#555]">
-                        {dayItems.length + dayGoogle.length > 4 && `+${dayItems.length + dayGoogle.length - 4} more`}
-                        {dayItems.length + dayGoogle.length > 4 && dayTasks.length > 0 && ' · '}
-                        {dayTasks.length > 0 && `${dayTasks.length} task${dayTasks.length === 1 ? '' : 's'}`}
+                        +{dayItems.length + dayGoogle.length + customTasks.length - 5} more
                       </span>
                     )}
                   </div>
@@ -744,16 +802,40 @@ export default function MyCalendarPage() {
                       >
                         {t.task.is_completed && <span className="text-[9px] text-white">✓</span>}
                       </button>
-                      <span
-                        className={`text-[11px] flex-1 ${
-                          t.task.is_completed ? 'text-[#555] line-through' : 'text-white'
-                        }`}
+                      <div className={`flex-1 min-w-0 ${t.task.is_completed ? 'opacity-50' : ''}`}>
+                        <p
+                          className={`text-[11px] truncate ${
+                            t.task.is_completed ? 'text-[#555] line-through' : 'text-white'
+                          }`}
+                        >
+                          {t.task.title}
+                        </p>
+                        {(t.task.start_time || t.task.is_eod) && (
+                          <p className="text-[9px] text-[#888] mt-0.5">
+                            {t.task.is_eod
+                              ? 'By end of day'
+                              : t.task.start_time
+                              ? new Date(`2000-01-01T${t.task.start_time}`).toLocaleTimeString('en-AU', {
+                                  hour: 'numeric',
+                                  minute: '2-digit',
+                                  hour12: true,
+                                })
+                              : ''}
+                          </p>
+                        )}
+                      </div>
+                      <a
+                        href={googleCalendarLinkForTask(t.task)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[9px] uppercase tracking-wider text-[#666] hover:text-[#6b8cff] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                        title="Add to Google Calendar"
                       >
-                        {t.task.title}
-                      </span>
+                        + GCAL
+                      </a>
                       <button
                         onClick={() => handleDeleteTask(t.task)}
-                        className="text-[#555] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity text-[11px]"
+                        className="text-[#555] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity text-[11px] flex-shrink-0"
                         aria-label="Delete task"
                       >
                         ×
@@ -763,7 +845,7 @@ export default function MyCalendarPage() {
                 )}
               </div>
             )}
-            <div className="flex gap-2 items-stretch">
+            <div className="space-y-2">
               <input
                 type="text"
                 value={newTaskTitle}
@@ -772,11 +854,40 @@ export default function MyCalendarPage() {
                   if (e.key === 'Enter') handleAddTask();
                 }}
                 placeholder="Add a task…"
-                className="input-polish flex-1 min-w-0 bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white placeholder:text-[#444]"
+                className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white placeholder:text-[#444]"
               />
-              <Button size="sm" onClick={handleAddTask} disabled={!newTaskTitle.trim()} className="flex-shrink-0">
-                Add
-              </Button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  type="time"
+                  value={newTaskTime}
+                  onChange={(e) => {
+                    setNewTaskTime(e.target.value);
+                    if (e.target.value) setNewTaskEod(false);
+                  }}
+                  disabled={newTaskEod}
+                  className="input-polish bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-[11px] text-white disabled:opacity-40 [color-scheme:dark]"
+                />
+                <label className="flex items-center gap-1.5 text-[11px] text-[#aaa] cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={newTaskEod}
+                    onChange={(e) => {
+                      setNewTaskEod(e.target.checked);
+                      if (e.target.checked) setNewTaskTime('');
+                    }}
+                    className="w-3.5 h-3.5 accent-amber-400"
+                  />
+                  Complete by EOD
+                </label>
+                <Button
+                  size="sm"
+                  onClick={handleAddTask}
+                  disabled={!newTaskTitle.trim()}
+                  className="ml-auto flex-shrink-0"
+                >
+                  Add
+                </Button>
+              </div>
             </div>
           </div>
 
