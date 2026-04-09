@@ -409,6 +409,31 @@ export async function updateBriefSLPT(id: string, subjectLine: string, previewTe
   if (error) throw error;
 }
 
+// ─── User Calendar Settings ───
+export async function getUserCalendarSettings(userId: string): Promise<{ google_embed_src: string } | null> {
+  const { data, error } = await supabase()
+    .from('user_calendar_settings')
+    .select('google_embed_src')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function saveUserCalendarSettings(userId: string, googleEmbedSrc: string): Promise<void> {
+  const { error } = await supabase()
+    .from('user_calendar_settings')
+    .upsert(
+      {
+        user_id: userId,
+        google_embed_src: googleEmbedSrc,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id' }
+    );
+  if (error) throw error;
+}
+
 // ─── Brand Comments ───
 export async function getBrandComments(brandId?: string): Promise<BrandComment[]> {
   let q = supabase()
