@@ -73,10 +73,12 @@ Return ONLY a JSON object inside <json>...</json> tags with this exact shape:
 
 1. Use computed.scores[dimension] verbatim — the server already scored each dimension 1/2/3.
 2. Use computed.overall_score verbatim for the summary.
-3. If a dimension has computed.data_missing === true, say so honestly in "what_was_found" and give a limited-scope assessment. Do not fabricate.
-4. The action_plan array must have at least 5 actions and at most 12.
-5. Top 3 priorities must map to real issues in the dimension findings, not invented problems.
-6. Return ONLY the JSON inside <json>...</json> tags. Nothing outside.
+3. The server provides every number you need inside each dimension object. NEVER say "data was missing", "we couldn't pull", "data unavailable", "insufficient data", or anything similar UNLESS the specific dimension object explicitly has data_missing === true. If the dimension object has fields like avg_open_rate_pct, campaigns_sent_last_90d, flow_message_tests_detected, etc., those are REAL numbers — use them.
+4. For A/B testing specifically: check computed.ab_testing.flow_message_tests_detected and computed.ab_testing.campaign_tests_detected. If EITHER is greater than 0, the account IS running tests. Never say "no tests detected" if these numbers are positive. Use the exact count from the data.
+5. For content strategy: use computed.content_strategy.campaigns_sent_last_90d and avg_campaigns_per_week verbatim. These are the real send counts.
+6. The action_plan array must have at least 5 actions and at most 12.
+7. Top 3 priorities must map to real issues in the dimension findings, not invented problems.
+8. Return ONLY the JSON inside <json>...</json> tags. Nothing outside.
 `;
 
 // Benchmarks for campaign open/click rates by vertical. Used by the server to

@@ -376,40 +376,64 @@ function scoreRevenueAttribution(
   };
 }
 
-function scoreAbTesting(flowRows: ReportRow[], campaignRows: ReportRow[]): DimensionResult {
-  // Heuristic: if any row's groupings contain a non-empty variation, the account tests
-  let flowTests = 0;
-  let campaignTests = 0;
-  const flowVariations = new Set<string>();
-  for (const r of flowRows) {
-    const v = r.groupings?.variation || '';
-    if (v && v !== 'original') {
-      flowVariations.add(r.groupings?.flow_id + '|' + v);
-      flowTests += 1;
-    }
+// Detect A/B tests by looking for (flow_id, flow_message_id) or
+// (campaign_id, campaign_message_id) groupings that have 2+ distinct
+// variation_name values. This is the same pattern the test-results tool uses
+// and it's the only reliable way to identify actual tests from report data.
+function scoreAbTesting(
+  flowVariationRows: ReportRow[],
+  campaignVariationRows: ReportRow[]
+): DimensionResult {
+  // Flow tests — group by (flow_id, flow_message_id) and count distinct variations
+  const flowTestGroups: Record<string, Set<string>> = {};
+  for (const r of flowVariationRows) {
+    const g = r.groupings || {};
+    const fId = g.flow_id;
+    const mId = g.flow_message_id;
+    const v = g.variation_name || g.variation;
+    if (!fId || !mId || !v) continue;
+    const key = `${fId}:${mId}`;
+    if (!flowTestGroups[key]) flowTestGroups[key] = new Set();
+    flowTestGroups[key].add(v);
   }
-  const campaignVariations = new Set<string>();
-  for (const r of campaignRows) {
-    const v = r.groupings?.variation || '';
-    if (v && v !== 'original') {
-      campaignVariations.add(r.groupings?.campaign_id + '|' + v);
-      campaignTests += 1;
-    }
+  const flowTestsFound = Object.entries(flowTestGroups).filter(
+    ([, variations]) => variations.size >= 2
+  );
+  const uniqueFlowsWithTests = new Set(
+    flowTestsFound.map(([key]) => key.split(':')[0])
+  );
+
+  // Campaign tests — group by campaign_id and count distinct variations
+  const campaignTestGroups: Record<string, Set<string>> = {};
+  for (const r of campaignVariationRows) {
+    const g = r.groupings || {};
+    const cId = g.campaign_id || g.campaign_message_id;
+    const v = g.variation_name || g.variation;
+    if (!cId || !v) continue;
+    if (!campaignTestGroups[cId]) campaignTestGroups[cId] = new Set();
+    campaignTestGroups[cId].add(v);
   }
+  const campaignTestsFound = Object.entries(campaignTestGroups).filter(
+    ([, variations]) => variations.size >= 2
+  );
+
+  const flowTestCount = flowTestsFound.length;
+  const campaignTestCount = campaignTestsFound.length;
 
   let score: 1 | 2 | 3;
-  if (flowTests > 0 && campaignTests > 0) score = 3;
-  else if (flowTests > 0 || campaignTests > 0) score = 2;
+  if (flowTestCount >= 2 && campaignTestCount >= 1) score = 3;
+  else if (flowTestCount > 0 || campaignTestCount > 0) score = 2;
   else score = 1;
 
   return {
     score,
-    flow_variation_rows: flowTests,
-    campaign_variation_rows: campaignTests,
+    flow_message_tests_detected: flowTestCount,
+    flow_count_with_tests: uniqueFlowsWithTests.size,
+    campaign_tests_detected: campaignTestCount,
     note:
-      flowTests === 0 && campaignTests === 0
+      flowTestCount + campaignTestCount === 0
         ? 'No A/B test variations detected in the last 90 days of report data.'
-        : `Detected ${flowVariations.size} flow test arm(s) and ${campaignVariations.size} campaign test arm(s).`,
+        : `Detected ${flowTestCount} flow-message test${flowTestCount === 1 ? '' : 's'} across ${uniqueFlowsWithTests.size} flow${uniqueFlowsWithTests.size === 1 ? '' : 's'}, and ${campaignTestCount} campaign test${campaignTestCount === 1 ? '' : 's'}.`,
   };
 }
 
@@ -421,37 +445,61 @@ function scoreContentStrategy(
     id: string;
     attributes?: {
       name?: string;
-      send_time?: string;
-      sendTime?: string;
       status?: string;
+      send_time?: string | null;
+      sendTime?: string | null;
+      scheduled_at?: string | null;
+      scheduledAt?: string | null;
     };
   }>(recentCampaignsRes);
 
-  // Get campaigns sent in last 90 days
   const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
-  const sent = campaigns.filter((c) => {
-    const t = c.attributes?.send_time || c.attributes?.sendTime;
+
+  // Primary source: if the campaign report returned rows for the period,
+  // every row represents a sent email campaign. Use that as the true count.
+  const campaignIdsWithStats = new Set<string>();
+  for (const r of campaignRows) {
+    const cId = r.groupings?.campaign_id;
+    if (cId) campaignIdsWithStats.add(cId);
+  }
+  const sentFromReport = campaignIdsWithStats.size;
+
+  // Fallback source: filter the /campaigns list to Sent campaigns in window
+  // (handles both camelCase and snake_case timestamps)
+  const sentFromList = campaigns.filter((c) => {
+    const attrs = c.attributes || {};
+    if (attrs.status && attrs.status.toLowerCase() !== 'sent') return false;
+    const t = attrs.send_time || attrs.sendTime || attrs.scheduled_at || attrs.scheduledAt;
     if (!t) return false;
     return new Date(t).getTime() > cutoff;
   });
-  const count90d = sent.length;
+
+  // Take the larger of the two — the report sometimes lags by a day and the
+  // list sometimes misses status; both are directional.
+  const count90d = Math.max(sentFromReport, sentFromList.length);
   const perWeek = round(count90d / (90 / 7), 1);
 
-  // Subject line repetition signal
-  const names = sent.map((c) => (c.attributes?.name || '').toLowerCase());
-  const uniqueRatio = names.length > 0 ? new Set(names).size / names.length : 1;
+  // Subject-line-like uniqueness: match campaigns by name using whichever
+  // source we used
+  const candidateNames = (sentFromList.length > 0 ? sentFromList : campaigns)
+    .map((c) => (c.attributes?.name || '').toLowerCase().trim())
+    .filter(Boolean);
+  const uniqueRatio =
+    candidateNames.length > 0 ? new Set(candidateNames).size / candidateNames.length : 1;
 
   let score: 1 | 2 | 3;
   if (perWeek >= 2 && perWeek <= 4 && uniqueRatio > 0.85) score = 3;
   else if (perWeek >= 1 && perWeek <= 5) score = 2;
-  else score = 1;
+  else if (count90d === 0) score = 1;
+  else score = 2;
 
   return {
     score,
     campaigns_sent_last_90d: count90d,
     avg_campaigns_per_week: perWeek,
     name_uniqueness_ratio: round(uniqueRatio, 2),
-    campaign_rows_with_stats: campaignRows.length,
+    campaigns_from_report: sentFromReport,
+    campaigns_from_list: sentFromList.length,
   };
 }
 
@@ -516,29 +564,61 @@ export async function POST(request: NextRequest) {
       flowsRes,
       flowReportRes,
       campaignReportRes,
+      flowVariationRes,
+      campaignVariationRes,
       listsRes,
       segmentsRes,
       campaignsListRes,
     ] = await Promise.all([
       safe(getFlows(apiKey), 'flows'),
+      // Overall flow report — grouped only by flow_id (no variation split)
       safe(
         getFlowReport(apiKey, {
           conversionMetricId: placedOrderId,
           statistics: reportStats,
           timeframe,
-          groupBy: ['send_channel', 'flow_id', 'variation'],
+          groupBy: ['send_channel', 'flow_id'],
         }),
         'flow_report'
       ),
+      // Overall campaign report — grouped only by campaign_id
       safe(
         getCampaignReport(apiKey, {
           conversionMetricId: placedOrderId,
           statistics: reportStats,
           timeframe,
           filter: 'equals(send_channel,"email")',
-          groupBy: ['send_channel', 'campaign_id', 'variation'],
+          groupBy: ['send_channel', 'campaign_id'],
         }),
         'campaign_report'
+      ),
+      // Dedicated variation-grouped flow report — for A/B test detection
+      safe(
+        getFlowReport(apiKey, {
+          conversionMetricId: placedOrderId,
+          statistics: ['recipients'],
+          timeframe,
+          groupBy: [
+            'send_channel',
+            'flow_id',
+            'flow_name',
+            'flow_message_id',
+            'variation',
+            'variation_name',
+          ],
+        }),
+        'flow_variation_report'
+      ),
+      // Dedicated variation-grouped campaign report — for A/B test detection
+      safe(
+        getCampaignReport(apiKey, {
+          conversionMetricId: placedOrderId,
+          statistics: ['recipients'],
+          timeframe,
+          filter: 'equals(send_channel,"email")',
+          groupBy: ['send_channel', 'campaign_id', 'campaign_message_id', 'variation', 'variation_name'],
+        }),
+        'campaign_variation_report'
       ),
       safe(getLists(apiKey), 'lists'),
       safe(getSegments(apiKey), 'segments'),
@@ -549,6 +629,8 @@ export async function POST(request: NextRequest) {
     const flows = extractList<KlaviyoFlow>(flowsRes);
     const flowRows = extractRows(flowReportRes);
     const campaignRows = extractRows(campaignReportRes);
+    const flowVariationRows = extractRows(flowVariationRes);
+    const campaignVariationRows = extractRows(campaignVariationRes);
     const lists = extractList<KlaviyoListOrSegment>(listsRes);
     const segments = extractList<KlaviyoListOrSegment>(segmentsRes);
 
@@ -562,7 +644,7 @@ export async function POST(request: NextRequest) {
     const dim4 = scoreDeliverability(campaignAgg);
     const dim5 = scoreListHealth(lists, segments);
     const dim6 = scoreRevenueAttribution(flowAgg, campaignAgg);
-    const dim7 = scoreAbTesting(flowRows, campaignRows);
+    const dim7 = scoreAbTesting(flowVariationRows, campaignVariationRows);
     const dim8 = scoreContentStrategy(campaignsListRes, campaignRows);
 
     const scores = {
