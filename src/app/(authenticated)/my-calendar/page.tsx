@@ -433,13 +433,28 @@ export default function MyCalendarPage() {
   const syncTaskToGoogle = async (task: PersonalTask, action: 'create' | 'update' | 'delete') => {
     if (!googleAccountEmail) return; // not connected, skip
     try {
-      await fetch('/api/my-calendar/sync-task', {
+      const res = await fetch('/api/my-calendar/sync-task', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ task, action }),
       });
-    } catch {
-      // silent — manual + GCAL link is always available
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        console.error('Google sync failed', data);
+        toast.error(`Google sync: ${data.error || res.statusText}`);
+        return;
+      }
+      if (data.skipped) {
+        console.warn('Google sync skipped', data.reason);
+        toast(`Google sync skipped: ${data.reason}`, { icon: '⚠️' });
+        return;
+      }
+      if (action === 'create' && data.ok) {
+        toast.success('Synced to Google Calendar');
+      }
+    } catch (err) {
+      console.error('Google sync network error', err);
+      toast.error('Google sync network error');
     }
   };
 
