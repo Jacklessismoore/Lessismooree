@@ -43,6 +43,23 @@ function formatEventTime(iso: string, allDay: boolean): string {
   return d.toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
+function formatTimeOfDay(t: string): string {
+  return new Date(`2000-01-01T${t}`).toLocaleTimeString('en-AU', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+function formatTaskTimeLabel(task: PersonalTask): string | null {
+  if (task.is_eod) return 'By end of day';
+  if (task.start_time && task.end_time) {
+    return `${formatTimeOfDay(task.start_time)} – ${formatTimeOfDay(task.end_time)}`;
+  }
+  if (task.start_time) return formatTimeOfDay(task.start_time);
+  return null;
+}
+
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -91,7 +108,8 @@ export default function MyCalendarPage() {
   // Personal tasks
   const [personalTasks, setPersonalTasks] = useState<PersonalTask[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskTime, setNewTaskTime] = useState(''); // "HH:MM"
+  const [newTaskStart, setNewTaskStart] = useState(''); // "HH:MM"
+  const [newTaskEnd, setNewTaskEnd] = useState(''); // "HH:MM"
   const [newTaskEod, setNewTaskEod] = useState(false);
 
   // Google settings (ICS for inline overlay)
@@ -390,17 +408,23 @@ export default function MyCalendarPage() {
 
   const handleAddTask = async () => {
     if (!user || !selectedDay || !newTaskTitle.trim()) return;
+    if (newTaskStart && newTaskEnd && newTaskEnd <= newTaskStart) {
+      toast.error('End time must be after start time');
+      return;
+    }
     try {
       const created = await createPersonalTask({
         user_id: user.id,
         date: ymd(selectedDay),
         title: newTaskTitle.trim(),
-        start_time: newTaskTime ? `${newTaskTime}:00` : null,
+        start_time: newTaskStart ? `${newTaskStart}:00` : null,
+        end_time: newTaskEnd ? `${newTaskEnd}:00` : null,
         is_eod: newTaskEod,
       });
       setPersonalTasks((prev) => [...prev, created]);
       setNewTaskTitle('');
-      setNewTaskTime('');
+      setNewTaskStart('');
+      setNewTaskEnd('');
       setNewTaskEod(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to add task');
@@ -420,12 +444,17 @@ export default function MyCalendarPage() {
       const nextStr = `${next.getFullYear()}${String(next.getMonth() + 1).padStart(2, '0')}${String(next.getDate()).padStart(2, '0')}`;
       dates = `${date}/${nextStr}`;
     } else if (task.start_time) {
-      // Timed event — default 30 min duration
-      const [h, m] = task.start_time.split(':').map(Number);
+      // Timed event — use real end time if present, otherwise default 30 min
+      const [sh, sm] = task.start_time.split(':').map(Number);
       const startLocal = new Date(task.date);
-      startLocal.setHours(h, m, 0, 0);
+      startLocal.setHours(sh, sm, 0, 0);
       const endLocal = new Date(startLocal);
-      endLocal.setMinutes(endLocal.getMinutes() + 30);
+      if (task.end_time) {
+        const [eh, em] = task.end_time.split(':').map(Number);
+        endLocal.setHours(eh, em, 0, 0);
+      } else {
+        endLocal.setMinutes(endLocal.getMinutes() + 30);
+      }
       const fmt = (d: Date) =>
         `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}00`;
       dates = `${fmt(startLocal)}/${fmt(endLocal)}`;
@@ -654,15 +683,16 @@ export default function MyCalendarPage() {
                     ))}
                     {customTasks.slice(0, 2).map((t) => {
                       if (t.kind !== 'custom') return null;
-                      const timeLabel = t.task.is_eod
+                      // Compact label for the day cell
+                      const compact = t.task.is_eod
                         ? 'EOD'
                         : t.task.start_time
-                        ? new Date(`2000-01-01T${t.task.start_time}`).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit', hour12: true })
+                        ? formatTimeOfDay(t.task.start_time)
                         : null;
                       return (
                         <span key={t.task.id} className="text-[10px] text-[#fbbf24] flex items-center gap-1.5 truncate">
                           <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
-                          <span className="truncate">{timeLabel ? `${timeLabel} · ` : ''}{t.task.title}</span>
+                          <span className="truncate">{compact ? `${compact} · ` : ''}{t.task.title}</span>
                         </span>
                       );
                     })}
@@ -810,18 +840,8 @@ export default function MyCalendarPage() {
                         >
                           {t.task.title}
                         </p>
-                        {(t.task.start_time || t.task.is_eod) && (
-                          <p className="text-[9px] text-[#888] mt-0.5">
-                            {t.task.is_eod
-                              ? 'By end of day'
-                              : t.task.start_time
-                              ? new Date(`2000-01-01T${t.task.start_time}`).toLocaleTimeString('en-AU', {
-                                  hour: 'numeric',
-                                  minute: '2-digit',
-                                  hour12: true,
-                                })
-                              : ''}
-                          </p>
+                        {formatTaskTimeLabel(t.task) && (
+                          <p className="text-[9px] text-[#888] mt-0.5">{formatTaskTimeLabel(t.task)}</p>
                         )}
                       </div>
                       <a
@@ -857,23 +877,42 @@ export default function MyCalendarPage() {
                 className="input-polish w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-[12px] text-white placeholder:text-[#444]"
               />
               <div className="flex items-center gap-2 flex-wrap">
-                <input
-                  type="time"
-                  value={newTaskTime}
-                  onChange={(e) => {
-                    setNewTaskTime(e.target.value);
-                    if (e.target.value) setNewTaskEod(false);
-                  }}
-                  disabled={newTaskEod}
-                  className="input-polish bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-[11px] text-white disabled:opacity-40 [color-scheme:dark]"
-                />
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] uppercase tracking-wider text-[#666]">Start</label>
+                  <input
+                    type="time"
+                    value={newTaskStart}
+                    onChange={(e) => {
+                      setNewTaskStart(e.target.value);
+                      if (e.target.value) setNewTaskEod(false);
+                    }}
+                    disabled={newTaskEod}
+                    className="input-polish bg-white/[0.03] border border-white/[0.08] rounded-lg px-2 py-1.5 text-[11px] text-white disabled:opacity-40 [color-scheme:dark]"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] uppercase tracking-wider text-[#666]">End</label>
+                  <input
+                    type="time"
+                    value={newTaskEnd}
+                    onChange={(e) => {
+                      setNewTaskEnd(e.target.value);
+                      if (e.target.value) setNewTaskEod(false);
+                    }}
+                    disabled={newTaskEod}
+                    className="input-polish bg-white/[0.03] border border-white/[0.08] rounded-lg px-2 py-1.5 text-[11px] text-white disabled:opacity-40 [color-scheme:dark]"
+                  />
+                </div>
                 <label className="flex items-center gap-1.5 text-[11px] text-[#aaa] cursor-pointer select-none">
                   <input
                     type="checkbox"
                     checked={newTaskEod}
                     onChange={(e) => {
                       setNewTaskEod(e.target.checked);
-                      if (e.target.checked) setNewTaskTime('');
+                      if (e.target.checked) {
+                        setNewTaskStart('');
+                        setNewTaskEnd('');
+                      }
                     }}
                     className="w-3.5 h-3.5 accent-amber-400"
                   />

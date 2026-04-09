@@ -479,6 +479,7 @@ export interface PersonalTask {
   title: string;
   is_completed: boolean;
   start_time: string | null;
+  end_time: string | null;
   is_eod: boolean;
   created_at: string;
 }
@@ -504,6 +505,7 @@ export async function createPersonalTask(task: {
   date: string;
   title: string;
   start_time?: string | null;
+  end_time?: string | null;
   is_eod?: boolean;
 }): Promise<PersonalTask> {
   const { data, error } = await supabase()
