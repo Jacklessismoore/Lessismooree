@@ -115,9 +115,45 @@ export default function AccountAuditPage() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ brandId: selectedBrand.id, vertical }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Audit failed');
-      setResult(data);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(errData.error || 'Audit failed');
+      }
+      // SSE stream: read chunks until we get the final result
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response stream');
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // Process complete SSE lines
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const payload = JSON.parse(line.slice(6));
+            if (payload.error) throw new Error(payload.error);
+            if (payload.done && payload.result) {
+              setResult(payload.result);
+            }
+          } catch (e) {
+            if (e instanceof Error && e.message !== 'Audit failed') throw e;
+          }
+        }
+      }
+      // Process any remaining buffer
+      if (buffer.startsWith('data: ')) {
+        try {
+          const payload = JSON.parse(buffer.slice(6));
+          if (payload.error) throw new Error(payload.error);
+          if (payload.done && payload.result) setResult(payload.result);
+        } catch {
+          // ignore incomplete final chunk
+        }
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Audit failed');
     } finally {

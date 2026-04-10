@@ -875,22 +875,39 @@ ${payloadJson}
 \`\`\`
 `;
 
-    // Stream required for large max_tokens to avoid Anthropic timeout
-    const stream = anthropic.messages.stream({
+    // Stream SSE to the client so the Vercel function stays alive past 60s.
+    // Text chunks arrive as `data: {"chunk":"..."}`, then a final
+    // `data: {"done":true, "result":{...}}` event carries the parsed audit.
+    const aiStream = anthropic.messages.stream({
       model: 'claude-sonnet-4-5',
       max_tokens: 16000,
       system: KLAVIYO_AUDIT_SKILL,
       messages: [{ role: 'user', content: userPrompt }],
     });
 
-    const response = await stream.finalMessage();
+    const encoder = new TextEncoder();
+    const readable = new ReadableStream({
+      async start(controller) {
+        const send = (obj: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+        };
 
-    const fullText = response.content
-      .filter((b) => b.type === 'text')
-      .map((b) => ('text' in b ? b.text : ''))
-      .join('');
+        try {
+          let fullText = '';
+          for await (const event of aiStream) {
+            if (
+              event.type === 'content_block_delta' &&
+              'delta' in event &&
+              (event.delta as { type: string; text?: string }).type === 'text_delta'
+            ) {
+              const chunk = (event.delta as { text: string }).text;
+              fullText += chunk;
+              send({ chunk });
+            }
+          }
 
-    const stopReason = response.stop_reason;
+          const finalMsg = await aiStream.finalMessage();
+          const stopReason = finalMsg.stop_reason;
 
     // Extract JSON. Robust to:
     //   1. <json>...</json> wrapper
@@ -978,24 +995,39 @@ ${payloadJson}
       return null;
     };
 
-    const parsed = extractJson(fullText);
+          const parsed = extractJson(fullText);
 
-    if (!parsed || !parsed.overall_summary) {
-      const tail = fullText.slice(-800);
-      return NextResponse.json(
-        {
-          error: `AI returned no usable audit (stop_reason: ${stopReason || 'unknown'}). This usually means the response was truncated. Last 800 chars: ${tail || '(empty)'}`,
-        },
-        { status: 500 }
-      );
-    }
+          if (!parsed || !parsed.overall_summary) {
+            const tail = fullText.slice(-800);
+            send({
+              error: `AI returned no usable audit (stop_reason: ${stopReason || 'unknown'}). Last 800 chars: ${tail || '(empty)'}`,
+            });
+          } else {
+            send({
+              done: true,
+              result: {
+                brand: { id: brand.id, name: brand.name },
+                vertical,
+                period_label: 'Last 90 days',
+                computed,
+                audit: parsed,
+              },
+            });
+          }
+        } catch (streamErr) {
+          send({ error: streamErr instanceof Error ? streamErr.message : 'Stream failed' });
+        } finally {
+          controller.close();
+        }
+      },
+    });
 
-    return NextResponse.json({
-      brand: { id: brand.id, name: brand.name },
-      vertical,
-      period_label: 'Last 90 days',
-      computed,
-      audit: parsed,
+    return new Response(readable, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
