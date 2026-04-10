@@ -75,7 +75,8 @@ export const NAV_SECTIONS = [
       { label: 'Test Results', href: '/test-results', icon: '📈' },
       { label: 'Client Comments', href: '/client-comments', icon: '📝' },
       { label: 'References', href: '/references', icon: '🔖' },
-      { label: 'Chat', href: '/chat', icon: '💬' },
+      { label: 'AI Chat', href: '/chat', icon: '🤖' },
+      { label: 'Team Chat', href: '/team-chat', icon: '💬' },
     ],
   },
 ];

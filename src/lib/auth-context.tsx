@@ -19,22 +19,22 @@ export const ROLE_ACCESS: Record<UserRole, string[]> = {
   none: [],
   admin: [
     '/', '/sop', '/create', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit',
-    '/message-request', '/my-calendar', '/design-queue', '/references', '/chat', '/client-comments',
+    '/message-request', '/my-calendar', '/design-queue', '/references', '/chat', '/team-chat', '/client-comments',
     '/clients', '/team', '/clients/new', '/ab-tests',
   ],
   account_manager: [
     '/', '/sop', '/create', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit',
-    '/message-request', '/my-calendar', '/design-queue', '/references', '/chat', '/client-comments',
+    '/message-request', '/my-calendar', '/design-queue', '/references', '/chat', '/team-chat', '/client-comments',
     '/clients', '/team', '/clients/new', '/ab-tests',
   ],
   designer: [
-    '/', '/create', '/calendar', '/briefs', '/flow-briefs', '/design-queue', '/chat', '/my-calendar',
+    '/', '/create', '/calendar', '/briefs', '/flow-briefs', '/design-queue', '/chat', '/team-chat', '/my-calendar',
   ],
   scheduler: [
-    '/', '/calendar', '/briefs', '/flow-briefs', '/chat', '/my-calendar',
+    '/', '/calendar', '/briefs', '/flow-briefs', '/chat', '/team-chat', '/my-calendar',
   ],
   klaviyo_tech: [
-    '/', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit', '/chat', '/ab-tests', '/client-comments', '/my-calendar',
+    '/', '/calendar', '/briefs', '/flow-briefs', '/reports', '/weekly-wrap', '/test-results', '/account-audit', '/chat', '/team-chat', '/ab-tests', '/client-comments', '/my-calendar',
   ],
 };
 
