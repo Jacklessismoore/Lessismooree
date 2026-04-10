@@ -102,11 +102,26 @@ export async function getAllProfiles(): Promise<UserProfile[]> {
 export async function getChannels(): Promise<TeamChannel[]> {
   const { data, error } = await supabase()
     .from('team_channels')
-    .select('*, brand:brands(name, color)')
+    .select('*')
     .order('is_default', { ascending: false })
     .order('name');
   if (error) throw error;
-  return (data ?? []) as TeamChannel[];
+  // Fetch brand info separately for channels with brand_id
+  const withBrand = (data ?? []) as TeamChannel[];
+  const brandIds = withBrand.map((c) => c.brand_id).filter((id): id is string => !!id);
+  if (brandIds.length > 0) {
+    const { data: brands } = await supabase()
+      .from('brands')
+      .select('id, name, color')
+      .in('id', brandIds);
+    const brandMap = new Map((brands ?? []).map((b: { id: string; name: string; color: string }) => [b.id, b]));
+    withBrand.forEach((ch) => {
+      if (ch.brand_id) {
+        ch.brand = (brandMap.get(ch.brand_id) as { name: string; color: string } | undefined) ?? null;
+      }
+    });
+  }
+  return withBrand;
 }
 
 export async function createChannel(

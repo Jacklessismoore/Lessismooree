@@ -73,12 +73,23 @@ export default function TeamChatPage() {
 
     const init = async () => {
       try {
-        const [chans, allProfs] = await Promise.all([
-          getChannels(),
-          getAllProfiles(),
-        ]);
-
+        let chans: TeamChannel[] = [];
+        try {
+          chans = await getChannels();
+        } catch (e) {
+          console.error('getChannels failed:', e);
+          toast.error('Failed to load channels');
+          return;
+        }
         setChannels(chans);
+
+        let allProfs: UserProfile[] = [];
+        try {
+          allProfs = await getAllProfiles();
+        } catch (e) {
+          console.error('getAllProfiles failed:', e);
+          // Non-critical — continue with empty profiles
+        }
 
         const profMap = new Map<string, UserProfile>();
         allProfs.forEach((p) => profMap.set(p.user_id, p));
@@ -88,17 +99,26 @@ export default function TeamChatPage() {
         // Ensure own profile
         let me = profMap.get(user.id) ?? null;
         if (!me) {
-          const email = user.email ?? '';
-          const name = email.split('@')[0] || 'User';
-          me = await upsertUserProfile(user.id, name);
-          profMap.set(user.id, me);
-          setProfiles(new Map(profMap));
-          allProfilesRef.current = [...allProfs, me];
+          try {
+            const email = user.email ?? '';
+            const name = email.split('@')[0] || 'User';
+            me = await upsertUserProfile(user.id, name);
+            profMap.set(user.id, me);
+            setProfiles(new Map(profMap));
+            allProfilesRef.current = [...allProfs, me];
+          } catch (e) {
+            console.error('upsertUserProfile failed:', e);
+          }
         }
         setMyProfile(me);
 
         // Auto-join all channels
-        await autoJoinAllChannels(user.id);
+        try {
+          await autoJoinAllChannels(user.id);
+        } catch (e) {
+          console.error('autoJoinAllChannels failed:', e);
+          // Non-critical — user may already be in channels
+        }
 
         // Select channel from URL or first
         const urlChannel = searchParams.get('channel');
