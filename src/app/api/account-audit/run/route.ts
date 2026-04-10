@@ -875,12 +875,15 @@ ${payloadJson}
 \`\`\`
 `;
 
-    const response = await anthropic.messages.create({
+    // Stream required for large max_tokens to avoid Anthropic timeout
+    const stream = anthropic.messages.stream({
       model: 'claude-sonnet-4-5',
-      max_tokens: 32000,
+      max_tokens: 16000,
       system: KLAVIYO_AUDIT_SKILL,
       messages: [{ role: 'user', content: userPrompt }],
     });
+
+    const response = await stream.finalMessage();
 
     const fullText = response.content
       .filter((b) => b.type === 'text')
