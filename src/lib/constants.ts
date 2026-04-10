@@ -52,6 +52,7 @@ export const NAV_SECTIONS = [
     items: [
       { label: 'SOP', href: '/sop', icon: '📋' },
       { label: 'My Calendar', href: '/my-calendar', icon: '🗓️' },
+      { label: 'Team Chat', href: '/team-chat', icon: '💬' },
       { label: 'Message Request', href: '/message-request', icon: '📥' },
     ],
   },
@@ -76,7 +77,6 @@ export const NAV_SECTIONS = [
       { label: 'Client Comments', href: '/client-comments', icon: '📝' },
       { label: 'References', href: '/references', icon: '🔖' },
       { label: 'AI Chat', href: '/chat', icon: '🤖' },
-      { label: 'Team Chat', href: '/team-chat', icon: '💬' },
     ],
   },
 ];

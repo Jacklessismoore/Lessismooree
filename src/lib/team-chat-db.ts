@@ -102,19 +102,11 @@ export async function getAllProfiles(): Promise<UserProfile[]> {
 export async function getChannels(): Promise<TeamChannel[]> {
   const { data, error } = await supabase()
     .from('team_channels')
-    .select('*, brand:brands(name, color), team_channel_members(count)')
+    .select('*, brand:brands(name, color)')
     .order('is_default', { ascending: false })
     .order('name');
   if (error) throw error;
-
-  return (data ?? []).map((ch: Record<string, unknown>) => {
-    const members = ch.team_channel_members as { count: number }[] | undefined;
-    return {
-      ...ch,
-      member_count: members?.[0]?.count ?? 0,
-      team_channel_members: undefined,
-    } as unknown as TeamChannel;
-  });
+  return (data ?? []) as TeamChannel[];
 }
 
 export async function createChannel(
@@ -153,7 +145,7 @@ export async function createChannel(
 export async function getChannelMembers(channelId: string): Promise<TeamChannelMember[]> {
   const { data, error } = await supabase()
     .from('team_channel_members')
-    .select('*, profile:user_profiles!user_id(*)')
+    .select('*')
     .eq('channel_id', channelId)
     .order('joined_at');
   if (error) throw error;
@@ -217,7 +209,7 @@ export async function getChannelMessages(
 ): Promise<TeamMessage[]> {
   let query = supabase()
     .from('team_messages')
-    .select('*, profile:user_profiles!user_id(*)')
+    .select('*')
     .eq('channel_id', channelId)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -241,7 +233,7 @@ export async function sendMessage(
   const { data, error } = await supabase()
     .from('team_messages')
     .insert({ channel_id: channelId, user_id: userId, content })
-    .select('*, profile:user_profiles!user_id(*)')
+    .select('*')
     .single();
   if (error) throw error;
   return data;
@@ -252,7 +244,7 @@ export async function editMessage(messageId: string, content: string): Promise<T
     .from('team_messages')
     .update({ content, edited_at: new Date().toISOString() })
     .eq('id', messageId)
-    .select('*, profile:user_profiles!user_id(*)')
+    .select('*')
     .single();
   if (error) throw error;
   return data;
