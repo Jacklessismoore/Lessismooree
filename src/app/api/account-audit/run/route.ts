@@ -877,7 +877,7 @@ ${payloadJson}
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-5',
-      max_tokens: 16000,
+      max_tokens: 32000,
       system: KLAVIYO_AUDIT_SKILL,
       messages: [{ role: 'user', content: userPrompt }],
     });
@@ -940,7 +940,11 @@ ${payloadJson}
       const first = text.indexOf('{');
       const last = text.lastIndexOf('}');
       if (first >= 0 && last > first) {
-        const body = text.slice(first, last + 1);
+        let body = text.slice(first, last + 1);
+        // Strip markdown code fences that sometimes sneak in
+        body = body.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+        // Fix trailing commas before } or ]
+        body = body.replace(/,\s*([}\]])/g, '$1');
         try {
           return JSON.parse(body) as ParsedAudit;
         } catch {
@@ -951,6 +955,20 @@ ${payloadJson}
             } catch {
               // fall through
             }
+          }
+        }
+      }
+      // Absolute last resort for truncated output: try to repair the whole text
+      const anyJson = text.slice(text.indexOf('{'));
+      if (anyJson.startsWith('{')) {
+        // Strip markdown fences + trailing commas
+        const cleaned = anyJson.replace(/```json\s*/g, '').replace(/```\s*/g, '').replace(/,\s*([}\]])/g, '$1');
+        const repaired = repairTruncatedJson(cleaned);
+        if (repaired) {
+          try {
+            return JSON.parse(repaired) as ParsedAudit;
+          } catch {
+            // truly unrecoverable
           }
         }
       }
