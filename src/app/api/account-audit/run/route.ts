@@ -652,6 +652,11 @@ export async function POST(request: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
       };
 
+      // Heartbeat every 5s to prevent Vercel from killing the function
+      const heartbeat = setInterval(() => {
+        try { controller.enqueue(encoder.encode(`: heartbeat\n\n`)); } catch { /* closed */ }
+      }, 5000);
+
       try {
     const apiKey = brand.klaviyo_api_key;
     const timeframe = { key: 'last_90_days' };
@@ -885,6 +890,7 @@ export async function POST(request: NextRequest) {
       } catch (outerErr) {
         send({ error: outerErr instanceof Error ? outerErr.message : 'Unknown error' });
       } finally {
+        clearInterval(heartbeat);
         controller.close();
       }
     },

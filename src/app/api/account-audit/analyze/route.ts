@@ -130,6 +130,11 @@ ${payloadJson}
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
         };
 
+        // Heartbeat every 5s to keep Vercel alive
+        const heartbeat = setInterval(() => {
+          try { controller.enqueue(encoder.encode(`: heartbeat\n\n`)); } catch { /* closed */ }
+        }, 5000);
+
         try {
           send({ status: 'Running AI analysis...' });
 
@@ -160,6 +165,7 @@ ${payloadJson}
         } catch (err) {
           send({ error: err instanceof Error ? err.message : 'AI analysis failed' });
         } finally {
+          clearInterval(heartbeat);
           controller.close();
         }
       },

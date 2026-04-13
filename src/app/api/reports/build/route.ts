@@ -99,6 +99,10 @@ export async function POST(request: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
       };
 
+      const heartbeat = setInterval(() => {
+        try { controller.enqueue(encoder.encode(`: heartbeat\n\n`)); } catch { /* closed */ }
+      }, 5000);
+
       try {
 
     const apiKey = brand.klaviyo_api_key;
@@ -120,6 +124,7 @@ export async function POST(request: NextRequest) {
 
     if (!placedOrderId) {
       send({ error: 'Could not find "Placed Order" metric in this Klaviyo account.' });
+      clearInterval(heartbeat);
       controller.close();
       return;
     }
@@ -339,6 +344,7 @@ ${payloadJson}
       } catch (streamErr) {
         send({ error: streamErr instanceof Error ? streamErr.message : 'Unknown error' });
       } finally {
+        clearInterval(heartbeat);
         controller.close();
       }
     },
