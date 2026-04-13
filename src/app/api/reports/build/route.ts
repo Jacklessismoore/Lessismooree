@@ -291,12 +291,14 @@ ${payloadJson}
     // Use Haiku 4.5 for the analysis call. Much faster than Sonnet and the
     // analysis work fits comfortably in its capabilities given the structured
     // payload we hand it.
-    const response = await anthropic.messages.create({
+    // Use streaming to avoid Anthropic SDK timeout for long-running requests
+    const stream = anthropic.messages.stream({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 6000,
       system: KLAVIYO_ACCOUNT_ANALYSER_SKILL,
       messages: [{ role: 'user', content: userPrompt }],
     });
+    const response = await stream.finalMessage();
 
     const fullText = response.content
       .filter((b) => b.type === 'text')
