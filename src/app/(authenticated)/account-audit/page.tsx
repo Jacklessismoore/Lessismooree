@@ -142,24 +142,17 @@ export default function AccountAuditPage() {
     setRunning(true);
     setResult(null);
     try {
-      // ── Step 1: Fetch Klaviyo data (under 60s) ──
+      // ── Step 1: Fetch Klaviyo data — plain JSON, no streaming (~20-40s) ──
+      toast('Pulling Klaviyo data...', { icon: '⏳', id: 'audit-status' });
       const fetchRes = await fetch('/api/account-audit/run', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ brandId: selectedBrand.id, vertical }),
       });
-      const ct = fetchRes.headers.get('content-type') || '';
-      let fetchResult: Record<string, unknown>;
-      if (ct.includes('application/json')) {
-        const data = await fetchRes.json();
-        if (data.error) throw new Error(data.error);
-        fetchResult = data;
-      } else {
-        const sseResult = await readSSE(fetchRes);
-        fetchResult = (sseResult.result as Record<string, unknown>) || sseResult;
-      }
+      const fetchData = await fetchRes.json();
+      if (fetchData.error) throw new Error(fetchData.error);
 
-      // ── Step 2: AI analysis (separate call, under 60s) ──
+      // ── Step 2: AI analysis — SSE streaming (~30-45s) ──
       toast('Analysing with AI...', { icon: '🧠', id: 'audit-status' });
       const analyzeRes = await fetch('/api/account-audit/analyze', {
         method: 'POST',
@@ -167,23 +160,15 @@ export default function AccountAuditPage() {
         body: JSON.stringify({
           brandName: selectedBrand.name,
           vertical,
-          computed: fetchResult.computed,
+          computed: fetchData.computed,
         }),
       });
-      const analyzeCt = analyzeRes.headers.get('content-type') || '';
-      let audit: Record<string, unknown>;
-      if (analyzeCt.includes('application/json')) {
-        const data = await analyzeRes.json();
-        if (data.error) throw new Error(data.error);
-        audit = data.audit || data;
-      } else {
-        const sseResult = await readSSE(analyzeRes);
-        audit = (sseResult.audit as Record<string, unknown>) || {};
-      }
+      const sseResult = await readSSE(analyzeRes);
+      const audit = (sseResult.audit as Record<string, unknown>) || {};
 
       // Combine fetch data + AI audit
       setResult({
-        ...fetchResult,
+        ...fetchData,
         audit,
       } as typeof result);
       toast.dismiss('audit-status');

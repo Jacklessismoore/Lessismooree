@@ -644,35 +644,19 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Stream SSE to bypass Vercel 60s limit — send status events during Klaviyo fetch
-  const encoder = new TextEncoder();
-  const readable = new ReadableStream({
-    async start(controller) {
-      const send = (obj: Record<string, unknown>) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
-      };
-
-      // Heartbeat every 5s to prevent Vercel from killing the function
-      const heartbeat = setInterval(() => {
-        try { controller.enqueue(encoder.encode(`: heartbeat\n\n`)); } catch { /* closed */ }
-      }, 5000);
-
-      try {
+  // Plain JSON response — no SSE, maximum speed. This step ONLY
+  // fetches Klaviyo data and computes dimension scores. The AI
+  // analysis happens in a separate /api/account-audit/analyze call.
+  try {
     const apiKey = brand.klaviyo_api_key;
     const timeframe = { key: 'last_90_days' };
-
-    send({ status: 'Connecting to Klaviyo...' });
 
     const metricsRes = await safe(getMetrics(apiKey), 'metrics');
     const metrics = extractList<KlaviyoMetric>((metricsRes as unknown) as { data?: KlaviyoMetric[] });
     const placedOrderId = findMetricId(metrics, 'Placed Order');
     if (!placedOrderId) {
-      send({ error: 'Placed Order metric not found.' });
-      controller.close();
-      return;
+      return NextResponse.json({ error: 'Placed Order metric not found.' }, { status: 500 });
     }
-
-    send({ status: 'Pulling flow & campaign data...' });
 
     // Pull everything in parallel
     const reportStats = [
@@ -839,34 +823,16 @@ export async function POST(request: NextRequest) {
     // Keep scores around purely for debugging — not sent to AI
     void scores;
 
-    // Return the computed data — the client will send it to /api/account-audit/analyze
-    // in a SECOND request for the AI analysis (keeps each call under 60s).
-    send({
-      done: true,
-      result: {
-        brand: { id: brand.id, name: brand.name },
-        vertical,
-        period_label: 'Last 90 days',
-        computed,
-        // Signal to client that analysis step is needed
-        needsAnalysis: true,
-      },
+    return NextResponse.json({
+      brand: { id: brand.id, name: brand.name },
+      vertical,
+      period_label: 'Last 90 days',
+      computed,
     });
-
-      } catch (outerErr) {
-        send({ error: outerErr instanceof Error ? outerErr.message : 'Unknown error' });
-      } finally {
-        clearInterval(heartbeat);
-        controller.close();
-      }
-    },
-  });
-
-  return new Response(readable, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    },
-  });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Unknown error' },
+      { status: 500 }
+    );
+  }
 }
