@@ -615,44 +615,59 @@ function scoreContentStrategy(
 // ─── Main handler ───
 
 export async function POST(request: NextRequest) {
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // Pre-flight checks (fast, return JSON directly)
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { brandId, vertical } = (await request.json()) as {
-      brandId: string;
-      vertical: string;
-    };
+  const { brandId, vertical } = (await request.json()) as {
+    brandId: string;
+    vertical: string;
+  };
 
-    if (!brandId) return NextResponse.json({ error: 'brandId required' }, { status: 400 });
-    if (!vertical) return NextResponse.json({ error: 'vertical required' }, { status: 400 });
+  if (!brandId) return NextResponse.json({ error: 'brandId required' }, { status: 400 });
+  if (!vertical) return NextResponse.json({ error: 'vertical required' }, { status: 400 });
 
-    const { data: brand } = await supabase
-      .from('brands')
-      .select('id, name, klaviyo_api_key, category')
-      .eq('id', brandId)
-      .single();
+  const { data: brand } = await supabase
+    .from('brands')
+    .select('id, name, klaviyo_api_key, category')
+    .eq('id', brandId)
+    .single();
 
-    if (!brand) return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
-    if (!brand.klaviyo_api_key) {
-      return NextResponse.json(
-        { error: 'This brand has no Klaviyo API key configured.' },
-        { status: 400 }
-      );
-    }
+  if (!brand) return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
+  if (!brand.klaviyo_api_key) {
+    return NextResponse.json(
+      { error: 'This brand has no Klaviyo API key configured.' },
+      { status: 400 }
+    );
+  }
 
+  // Stream SSE to bypass Vercel 60s limit — send status events during Klaviyo fetch
+  const encoder = new TextEncoder();
+  const readable = new ReadableStream({
+    async start(controller) {
+      const send = (obj: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+      };
+
+      try {
     const apiKey = brand.klaviyo_api_key;
     const timeframe = { key: 'last_90_days' };
+
+    send({ status: 'Connecting to Klaviyo...' });
 
     const metricsRes = await safe(getMetrics(apiKey), 'metrics');
     const metrics = extractList<KlaviyoMetric>((metricsRes as unknown) as { data?: KlaviyoMetric[] });
     const placedOrderId = findMetricId(metrics, 'Placed Order');
     if (!placedOrderId) {
-      return NextResponse.json({ error: 'Placed Order metric not found.' }, { status: 500 });
+      send({ error: 'Placed Order metric not found.' });
+      controller.close();
+      return;
     }
+
+    send({ status: 'Pulling flow & campaign data...' });
 
     // Pull everything in parallel
     const reportStats = [
@@ -875,9 +890,8 @@ ${payloadJson}
 \`\`\`
 `;
 
-    // Stream SSE to the client so the Vercel function stays alive past 60s.
-    // Text chunks arrive as `data: {"chunk":"..."}`, then a final
-    // `data: {"done":true, "result":{...}}` event carries the parsed audit.
+    send({ status: 'Running AI analysis...' });
+
     const aiStream = anthropic.messages.stream({
       model: 'claude-sonnet-4-5',
       max_tokens: 16000,
@@ -885,14 +899,9 @@ ${payloadJson}
       messages: [{ role: 'user', content: userPrompt }],
     });
 
-    const encoder = new TextEncoder();
-    const readable = new ReadableStream({
-      async start(controller) {
-        const send = (obj: Record<string, unknown>) => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
-        };
-
-        try {
+    {
+      // AI streaming phase
+      try {
           let fullText = '';
           for await (const event of aiStream) {
             if (
@@ -1015,22 +1024,23 @@ ${payloadJson}
             });
           }
         } catch (streamErr) {
-          send({ error: streamErr instanceof Error ? streamErr.message : 'Stream failed' });
-        } finally {
-          controller.close();
+          send({ error: streamErr instanceof Error ? streamErr.message : 'AI stream failed' });
         }
-      },
-    });
+    } // end AI streaming block
 
-    return new Response(readable, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+      } catch (outerErr) {
+        send({ error: outerErr instanceof Error ? outerErr.message : 'Unknown error' });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(readable, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
 }
