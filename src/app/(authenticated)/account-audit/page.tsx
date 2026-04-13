@@ -115,15 +115,25 @@ export default function AccountAuditPage() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ brandId: selectedBrand.id, vertical }),
       });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(errData.error || 'Audit failed');
+
+      // Handle non-stream error responses (auth, validation)
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        // Old-style direct JSON response (shouldn't happen but handle gracefully)
+        if (data.audit) { setResult(data); return; }
+        throw new Error('Unexpected response');
       }
+
+      if (!res.ok) throw new Error(`Server error (${res.status})`);
+
       // SSE stream: read chunks until we get the final result
       const reader = res.body?.getReader();
       if (!reader) throw new Error('No response stream');
       const decoder = new TextDecoder();
       let buffer = '';
+      let gotResult = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -133,14 +143,11 @@ export default function AccountAuditPage() {
         buffer = lines.pop() || '';
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
-          try {
-            const payload = JSON.parse(line.slice(6));
-            if (payload.error) throw new Error(payload.error);
-            if (payload.done && payload.result) {
-              setResult(payload.result);
-            }
-          } catch (e) {
-            if (e instanceof Error && e.message !== 'Audit failed') throw e;
+          const payload = JSON.parse(line.slice(6));
+          if (payload.error) throw new Error(payload.error);
+          if (payload.done && payload.result) {
+            setResult(payload.result);
+            gotResult = true;
           }
         }
       }
@@ -149,12 +156,19 @@ export default function AccountAuditPage() {
         try {
           const payload = JSON.parse(buffer.slice(6));
           if (payload.error) throw new Error(payload.error);
-          if (payload.done && payload.result) setResult(payload.result);
+          if (payload.done && payload.result) {
+            setResult(payload.result);
+            gotResult = true;
+          }
         } catch {
-          // ignore incomplete final chunk
+          // incomplete final chunk
         }
       }
+      if (!gotResult) {
+        throw new Error('Audit stream ended without a result. The AI may have timed out — try again.');
+      }
     } catch (err) {
+      console.error('Audit error:', err);
       toast.error(err instanceof Error ? err.message : 'Audit failed');
     } finally {
       setRunning(false);
