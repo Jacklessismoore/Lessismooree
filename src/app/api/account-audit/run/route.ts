@@ -689,20 +689,16 @@ export async function POST(request: NextRequest) {
       'spam_complaint_rate',
     ];
 
+    // Reduced to 5 parallel calls (from 8) to fit within Vercel 60s limit.
+    // Removed: variation reports (A/B detection) + campaigns list (redundant with campaign report).
     const [
       flowsRes,
       flowReportRes,
       campaignReportRes,
-      flowVariationRes,
-      campaignVariationRes,
       listsRes,
       segmentsRes,
-      campaignsListRes,
     ] = await Promise.all([
       safe(getFlows(apiKey), 'flows'),
-      // Overall flow report — grouped by flow_id + flow_message_id so
-      // we get per-message rows (every row in a flow-values-report is an
-      // already-scoped metric bucket)
       safe(
         getFlowReport(apiKey, {
           conversionMetricId: placedOrderId,
@@ -712,7 +708,6 @@ export async function POST(request: NextRequest) {
         }),
         'flow_report'
       ),
-      // Overall campaign report — grouped by campaign_id + campaign_message_id
       safe(
         getCampaignReport(apiKey, {
           conversionMetricId: placedOrderId,
@@ -723,30 +718,8 @@ export async function POST(request: NextRequest) {
         }),
         'campaign_report'
       ),
-      // Dedicated variation-grouped flow report — for A/B test detection
-      safe(
-        getFlowReport(apiKey, {
-          conversionMetricId: placedOrderId,
-          statistics: ['recipients'],
-          timeframe,
-          groupBy: ['flow_id', 'flow_message_id', 'variation', 'variation_name'],
-        }),
-        'flow_variation_report'
-      ),
-      // Dedicated variation-grouped campaign report — for A/B test detection
-      safe(
-        getCampaignReport(apiKey, {
-          conversionMetricId: placedOrderId,
-          statistics: ['recipients'],
-          timeframe,
-          filter: 'equals(send_channel,"email")',
-          groupBy: ['campaign_id', 'campaign_message_id', 'variation', 'variation_name'],
-        }),
-        'campaign_variation_report'
-      ),
       safe(getLists(apiKey), 'lists'),
       safe(getSegments(apiKey), 'segments'),
-      safe(getCampaigns(apiKey, 'equals(messages.channel,"email")'), 'campaigns_list'),
     ]);
 
     // If the main reports errored, surface the errors so we can actually debug
@@ -755,11 +728,8 @@ export async function POST(request: NextRequest) {
       ['flows', flowsRes],
       ['flow_report', flowReportRes],
       ['campaign_report', campaignReportRes],
-      ['flow_variation_report', flowVariationRes],
-      ['campaign_variation_report', campaignVariationRes],
       ['lists', listsRes],
       ['segments', segmentsRes],
-      ['campaigns_list', campaignsListRes],
     ] as const) {
       const err = (r as { error?: string })?.error;
       if (err) apiErrors.push(`${label}: ${err}`);
@@ -781,8 +751,10 @@ export async function POST(request: NextRequest) {
     const flows = extractList<KlaviyoFlow>(flowsRes);
     const rawFlowRows = extractRows(flowReportRes);
     const rawCampaignRows = extractRows(campaignReportRes);
-    const rawFlowVariationRows = extractRows(flowVariationRes);
-    const rawCampaignVariationRows = extractRows(campaignVariationRes);
+    // Variation reports removed to fit within 60s — A/B test scoring uses
+    // empty arrays, so the dimension gets a neutral score.
+    const rawFlowVariationRows: ReturnType<typeof extractRows> = [];
+    const rawCampaignVariationRows: ReturnType<typeof extractRows> = [];
     const lists = extractList<KlaviyoListOrSegment>(listsRes);
     const segments = extractList<KlaviyoListOrSegment>(segmentsRes);
 
@@ -794,15 +766,9 @@ export async function POST(request: NextRequest) {
         .map((f) => f.id)
     );
 
-    // Build a set of SENT campaign IDs. The /campaigns list gives us status.
-    const campaignsList = extractList<{ id: string; attributes?: { status?: string } }>(
-      campaignsListRes
-    );
-    const sentCampaignIds = new Set(
-      campaignsList
-        .filter((c) => (c.attributes?.status || '').toLowerCase() === 'sent')
-        .map((c) => c.id)
-    );
+    // Campaigns list removed to save time — fall back to including all campaign
+    // rows with recipients (they were sent by definition).
+    const sentCampaignIds = new Set<string>();
 
     // If we couldn't build the sent set (e.g. list call failed), fall back to
     // including every campaign row that has recipients — they were sent by
@@ -835,7 +801,7 @@ export async function POST(request: NextRequest) {
     const dim5 = scoreListHealth(lists, segments);
     const dim6 = scoreRevenueAttribution(flowAgg, campaignAgg);
     const dim7 = scoreAbTesting(flowVariationRows, campaignVariationRows);
-    const dim8 = scoreContentStrategy(campaignsListRes, campaignRows);
+    const dim8 = scoreContentStrategy(null, campaignRows);
 
     const scores = {
       flow_architecture: dim1.score,
