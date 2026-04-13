@@ -868,161 +868,19 @@ export async function POST(request: NextRequest) {
     // Keep scores around purely for debugging — not sent to AI
     void scores;
 
-    const payloadJson = JSON.stringify(
-      {
-        brand: { name: brand.name, category: brand.category || 'unknown', vertical },
+    // Return the computed data — the client will send it to /api/account-audit/analyze
+    // in a SECOND request for the AI analysis (keeps each call under 60s).
+    send({
+      done: true,
+      result: {
+        brand: { id: brand.id, name: brand.name },
+        vertical,
         period_label: 'Last 90 days',
         computed,
+        // Signal to client that analysis step is needed
+        needsAnalysis: true,
       },
-      null,
-      2
-    );
-
-    const userPrompt = `Audit the Klaviyo account for ${brand.name} (vertical: ${vertical}, covering the last 90 days).
-
-The server pulled the data — it's all in the "computed" object below. YOU are the evaluator: score each of the 8 dimensions 0-100 using the methodology in your system prompt, then write findings and an action plan.
-
-Return the audit as a JSON object wrapped in <json>...</json> tags.
-
-=== DATA ===
-\`\`\`json
-${payloadJson}
-\`\`\`
-`;
-
-    send({ status: 'Running AI analysis...' });
-
-    const aiStream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 16000,
-      system: KLAVIYO_AUDIT_SKILL,
-      messages: [{ role: 'user', content: userPrompt }],
     });
-
-    {
-      // AI streaming phase — use .on('text') for keepalive chunks
-      // then .finalMessage() for the complete response.
-      try {
-          aiStream.on('text', (text) => {
-            send({ chunk: text });
-          });
-
-          const finalMsg = await aiStream.finalMessage();
-          const fullText = finalMsg.content
-            .filter((b) => b.type === 'text')
-            .map((b) => ('text' in b ? b.text : ''))
-            .join('');
-          const stopReason = finalMsg.stop_reason;
-
-    // Extract JSON. Robust to:
-    //   1. <json>...</json> wrapper
-    //   2. Raw JSON with preamble/trailing text
-    //   3. Output that got truncated before the closing </json> tag
-    type ParsedAudit = {
-      overall_score?: number;
-      overall_summary?: string;
-      top_3_priorities?: string[];
-      dimensions?: Record<string, {
-        score?: number;
-        one_liner?: string;
-        what_was_found?: string;
-        what_is_working?: string;
-        what_needs_fixing?: string;
-        recommended_actions?: string[];
-      }>;
-      action_plan?: Array<{ action: string; owner: string; priority: string; effort: string }>;
-    };
-
-    const extractJson = (text: string): ParsedAudit | null => {
-      // Try the closed <json> tag first
-      const tagged = text.match(/<json>([\s\S]*?)<\/json>/);
-      if (tagged) {
-        try {
-          return JSON.parse(tagged[1].trim()) as ParsedAudit;
-        } catch {
-          // fall through
-        }
-      }
-      // Try open <json> tag (closing tag missing from truncation)
-      const openTag = text.match(/<json>([\s\S]*)$/);
-      if (openTag) {
-        const body = openTag[1].trim();
-        try {
-          return JSON.parse(body) as ParsedAudit;
-        } catch {
-          // Try to repair: walk until braces balance
-          const repaired = repairTruncatedJson(body);
-          if (repaired) {
-            try {
-              return JSON.parse(repaired) as ParsedAudit;
-            } catch {
-              // fall through
-            }
-          }
-        }
-      }
-      // Last resort: greedy brace match
-      const first = text.indexOf('{');
-      const last = text.lastIndexOf('}');
-      if (first >= 0 && last > first) {
-        let body = text.slice(first, last + 1);
-        // Strip markdown code fences that sometimes sneak in
-        body = body.replace(/```json\s*/g, '').replace(/```\s*/g, '');
-        // Fix trailing commas before } or ]
-        body = body.replace(/,\s*([}\]])/g, '$1');
-        try {
-          return JSON.parse(body) as ParsedAudit;
-        } catch {
-          const repaired = repairTruncatedJson(body);
-          if (repaired) {
-            try {
-              return JSON.parse(repaired) as ParsedAudit;
-            } catch {
-              // fall through
-            }
-          }
-        }
-      }
-      // Absolute last resort for truncated output: try to repair the whole text
-      const anyJson = text.slice(text.indexOf('{'));
-      if (anyJson.startsWith('{')) {
-        // Strip markdown fences + trailing commas
-        const cleaned = anyJson.replace(/```json\s*/g, '').replace(/```\s*/g, '').replace(/,\s*([}\]])/g, '$1');
-        const repaired = repairTruncatedJson(cleaned);
-        if (repaired) {
-          try {
-            return JSON.parse(repaired) as ParsedAudit;
-          } catch {
-            // truly unrecoverable
-          }
-        }
-      }
-      return null;
-    };
-
-          const parsed = extractJson(fullText);
-
-          if (!parsed || !parsed.overall_summary) {
-            const tail = fullText.slice(-800);
-            send({
-              error: `AI returned no usable audit (stop_reason: ${stopReason || 'unknown'}). Last 800 chars: ${tail || '(empty)'}`,
-            });
-          } else {
-            send({
-              done: true,
-              result: {
-                brand: { id: brand.id, name: brand.name },
-                vertical,
-                period_label: 'Last 90 days',
-                computed,
-                audit: parsed,
-              },
-            });
-          }
-        } catch (streamErr) {
-          send({ error: streamErr instanceof Error ? streamErr.message : 'AI stream failed' });
-        }
-    } // end AI streaming block
 
       } catch (outerErr) {
         send({ error: outerErr instanceof Error ? outerErr.message : 'Unknown error' });

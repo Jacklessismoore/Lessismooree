@@ -105,70 +105,92 @@ export default function AccountAuditPage() {
     return groups;
   }, [podBrands, podManagers]);
 
+  // Helper: read an SSE stream and return the final payload
+  const readSSE = async (res: Response): Promise<Record<string, unknown>> => {
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error('No response stream');
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalPayload: Record<string, unknown> | null = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = JSON.parse(line.slice(6));
+        if (payload.error) throw new Error(payload.error);
+        if (payload.status) toast(payload.status, { icon: '⏳', id: 'audit-status' });
+        if (payload.done) finalPayload = payload;
+      }
+    }
+    if (buffer.startsWith('data: ')) {
+      try {
+        const payload = JSON.parse(buffer.slice(6));
+        if (payload.error) throw new Error(payload.error);
+        if (payload.done) finalPayload = payload;
+      } catch { /* incomplete */ }
+    }
+    if (!finalPayload) throw new Error('Stream ended without result — try again.');
+    return finalPayload;
+  };
+
   const handleRun = async () => {
     if (!selectedBrand) return;
     setRunning(true);
     setResult(null);
     try {
-      const res = await fetch('/api/account-audit/run', {
+      // ── Step 1: Fetch Klaviyo data (under 60s) ──
+      const fetchRes = await fetch('/api/account-audit/run', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ brandId: selectedBrand.id, vertical }),
       });
-
-      // Handle non-stream error responses (auth, validation)
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const data = await res.json();
+      const ct = fetchRes.headers.get('content-type') || '';
+      let fetchResult: Record<string, unknown>;
+      if (ct.includes('application/json')) {
+        const data = await fetchRes.json();
         if (data.error) throw new Error(data.error);
-        // Old-style direct JSON response (shouldn't happen but handle gracefully)
-        if (data.audit) { setResult(data); return; }
-        throw new Error('Unexpected response');
+        fetchResult = data;
+      } else {
+        const sseResult = await readSSE(fetchRes);
+        fetchResult = (sseResult.result as Record<string, unknown>) || sseResult;
       }
 
-      if (!res.ok) throw new Error(`Server error (${res.status})`);
+      // ── Step 2: AI analysis (separate call, under 60s) ──
+      toast('Analysing with AI...', { icon: '🧠', id: 'audit-status' });
+      const analyzeRes = await fetch('/api/account-audit/analyze', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          brandName: selectedBrand.name,
+          vertical,
+          computed: fetchResult.computed,
+        }),
+      });
+      const analyzeCt = analyzeRes.headers.get('content-type') || '';
+      let audit: Record<string, unknown>;
+      if (analyzeCt.includes('application/json')) {
+        const data = await analyzeRes.json();
+        if (data.error) throw new Error(data.error);
+        audit = data.audit || data;
+      } else {
+        const sseResult = await readSSE(analyzeRes);
+        audit = (sseResult.audit as Record<string, unknown>) || {};
+      }
 
-      // SSE stream: read chunks until we get the final result
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error('No response stream');
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let gotResult = false;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        // Process complete SSE lines
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const payload = JSON.parse(line.slice(6));
-          if (payload.error) throw new Error(payload.error);
-          if (payload.done && payload.result) {
-            setResult(payload.result);
-            gotResult = true;
-          }
-        }
-      }
-      // Process any remaining buffer
-      if (buffer.startsWith('data: ')) {
-        try {
-          const payload = JSON.parse(buffer.slice(6));
-          if (payload.error) throw new Error(payload.error);
-          if (payload.done && payload.result) {
-            setResult(payload.result);
-            gotResult = true;
-          }
-        } catch {
-          // incomplete final chunk
-        }
-      }
-      if (!gotResult) {
-        throw new Error('Audit stream ended without a result. The AI may have timed out — try again.');
-      }
+      // Combine fetch data + AI audit
+      setResult({
+        ...fetchResult,
+        audit,
+      } as typeof result);
+      toast.dismiss('audit-status');
+      toast.success('Audit complete');
     } catch (err) {
       console.error('Audit error:', err);
+      toast.dismiss('audit-status');
       toast.error(err instanceof Error ? err.message : 'Audit failed');
     } finally {
       setRunning(false);
