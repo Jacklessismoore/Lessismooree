@@ -251,6 +251,7 @@ export default function ReportsPage() {
   const [endDate, setEndDate] = useState(defaultEnd());
   const [prompt, setPrompt] = useState('');
   const [building, setBuilding] = useState(false);
+  const [buildStatus, setBuildStatus] = useState('');
   const [reportMd, setReportMd] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
@@ -268,6 +269,7 @@ export default function ReportsPage() {
     if (!selectedBrand) return;
     setBuilding(true);
     setReportMd(null);
+    setBuildStatus('Starting...');
     try {
       const res = await fetch('/api/reports/build', {
         method: 'POST',
@@ -279,27 +281,63 @@ export default function ReportsPage() {
           endDate,
         }),
       });
-      let data: { markdown?: string; error?: string; raw?: string } = {};
-      try {
-        data = await res.json();
-      } catch {
-        // gateway timeout returns no body
+
+      // Handle non-stream error responses (auth, validation)
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        if (data.markdown) {
+          setReportMd(data.markdown);
+          toast.success('Report ready');
+        }
+        return;
       }
-      if (!res.ok) {
-        throw new Error(
-          data.error ||
-            (res.status === 504
-              ? 'The Klaviyo report timed out (60s). Try a narrower request or shorter date range.'
-              : `Failed (${res.status})`)
-        );
+
+      // SSE stream
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response stream');
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const payload = JSON.parse(line.slice(6));
+            if (payload.error) throw new Error(payload.error);
+            if (payload.status) setBuildStatus(payload.status);
+            if (payload.done && payload.result) {
+              setReportMd(payload.result.markdown);
+              toast.success('Report ready');
+            }
+          } catch (e) {
+            if (e instanceof Error && e.message) throw e;
+          }
+        }
       }
-      if (!data.markdown) throw new Error('AI returned no markdown');
-      setReportMd(data.markdown);
-      toast.success('Report ready');
+      // Process remaining buffer
+      if (buffer.startsWith('data: ')) {
+        try {
+          const payload = JSON.parse(buffer.slice(6));
+          if (payload.error) throw new Error(payload.error);
+          if (payload.done && payload.result) {
+            setReportMd(payload.result.markdown);
+            toast.success('Report ready');
+          }
+        } catch {
+          // ignore
+        }
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to build report');
     } finally {
       setBuilding(false);
+      setBuildStatus('');
     }
   }, [selectedBrand, prompt, startDate, endDate]);
 
@@ -400,7 +438,7 @@ export default function ReportsPage() {
               {building ? 'Building report…' : 'Build report'}
             </Button>
             {building && (
-              <p className="text-[12px] text-[#666] mt-3">This may take a moment.</p>
+              <p className="text-[12px] text-[#666] mt-3">{buildStatus || 'This may take a moment.'}</p>
             )}
           </div>
         </Card>

@@ -61,37 +61,48 @@ function dateRangeFilter(startISO: string, endISO: string): string {
 }
 
 export async function POST(request: NextRequest) {
-  try {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // Pre-flight checks that can return JSON directly (fast, no streaming needed)
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { brandId, prompt, startDate, endDate } = (await request.json()) as {
-      brandId: string;
-      prompt: string;
-      startDate: string;
-      endDate: string;
-    };
+  const { brandId, prompt, startDate, endDate } = (await request.json()) as {
+    brandId: string;
+    prompt: string;
+    startDate: string;
+    endDate: string;
+  };
 
-    if (!brandId) return NextResponse.json({ error: 'brandId required' }, { status: 400 });
+  if (!brandId) return NextResponse.json({ error: 'brandId required' }, { status: 400 });
 
-    const { data: brand } = await supabase
-      .from('brands')
-      .select('id, name, klaviyo_api_key, category, voice')
-      .eq('id', brandId)
-      .single();
+  const { data: brand } = await supabase
+    .from('brands')
+    .select('id, name, klaviyo_api_key, category, voice')
+    .eq('id', brandId)
+    .single();
 
-    if (!brand) return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
-    if (!brand.klaviyo_api_key) {
-      return NextResponse.json(
-        { error: 'This brand has no Klaviyo API key configured. Add one on the client page first.' },
-        { status: 400 }
-      );
-    }
+  if (!brand) return NextResponse.json({ error: 'Brand not found' }, { status: 404 });
+  if (!brand.klaviyo_api_key) {
+    return NextResponse.json(
+      { error: 'This brand has no Klaviyo API key configured. Add one on the client page first.' },
+      { status: 400 }
+    );
+  }
+
+  // Stream SSE so Vercel keeps the function alive past 60s
+  const encoder = new TextEncoder();
+  const readable = new ReadableStream({
+    async start(controller) {
+      const send = (obj: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+      };
+
+      try {
 
     const apiKey = brand.klaviyo_api_key;
+    send({ status: 'Connecting to Klaviyo...' });
 
     // ─── PHASE 1: account details + metrics (need these before anything else) ───
     const [accountRes, metricsRes] = await Promise.all([
@@ -108,11 +119,12 @@ export async function POST(request: NextRequest) {
     const subscribedId = findMetricId(metrics, 'Subscribed to List');
 
     if (!placedOrderId) {
-      return NextResponse.json(
-        { error: 'Could not find "Placed Order" metric in this Klaviyo account. Confirm the brand has e-commerce tracking set up.' },
-        { status: 500 }
-      );
+      send({ error: 'Could not find "Placed Order" metric in this Klaviyo account.' });
+      controller.close();
+      return;
     }
+
+    send({ status: 'Pulling campaign & flow data...' });
 
     // ─── PHASE 2: parallel data fetch — essentials only to fit the timeout ───
     const dateFilter = dateRangeFilter(startDate, endDate);
@@ -161,6 +173,8 @@ export async function POST(request: NextRequest) {
         'get_flow_report'
       ),
     ]);
+
+    send({ status: 'Crunching revenue metrics...' });
 
     // PHASE 2b: metric-aggregate calls. These share a burst limit (3/sec) so we
     // run them SEQUENTIALLY. The klaviyoGet/Post helpers auto-retry 429s with
@@ -288,6 +302,8 @@ ${payloadJson}
 \`\`\`
 `;
 
+    send({ status: 'Analysing with AI...' });
+
     // Use Haiku 4.5 for the analysis call. Much faster than Sonnet and the
     // analysis work fits comfortably in its capabilities given the structured
     // payload we hand it.
@@ -307,21 +323,32 @@ ${payloadJson}
 
     const markdown = extractBlock(fullText, 'markdown');
     if (!markdown) {
-      return NextResponse.json(
-        { error: 'AI did not return a <markdown> block', raw: fullText.slice(0, 1500) },
-        { status: 500 }
-      );
+      send({ error: 'AI did not return a <markdown> block. Raw: ' + fullText.slice(0, 500) });
+    } else {
+      send({
+        done: true,
+        result: {
+          brand: { id: brand.id, name: brand.name },
+          markdown,
+          startDate,
+          endDate,
+          prompt,
+        },
+      });
     }
+      } catch (streamErr) {
+        send({ error: streamErr instanceof Error ? streamErr.message : 'Unknown error' });
+      } finally {
+        controller.close();
+      }
+    },
+  });
 
-    return NextResponse.json({
-      brand: { id: brand.id, name: brand.name },
-      markdown,
-      startDate,
-      endDate,
-      prompt,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+  return new Response(readable, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
 }
