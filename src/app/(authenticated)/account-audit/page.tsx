@@ -142,6 +142,16 @@ export default function AccountAuditPage() {
     setRunning(true);
     setResult(null);
     try {
+      const safeJson = async (res: Response, stepName: string) => {
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(text ? `${stepName}: ${text.slice(0, 200)}` : `${stepName} timed out (${res.status}). Try again.`);
+        }
+        const text = await res.text();
+        if (!text) throw new Error(`${stepName} returned empty response. Server may have timed out — try again.`);
+        try { return JSON.parse(text); } catch { throw new Error(`${stepName} returned invalid response: ${text.slice(0, 100)}`); }
+      };
+
       // ── Step 1/3: Light Klaviyo calls (~10-20s) ──
       toast('Connecting to Klaviyo...', { icon: '⏳', id: 'audit-status' });
       const p1Res = await fetch('/api/account-audit/run', {
@@ -149,7 +159,7 @@ export default function AccountAuditPage() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ brandId: selectedBrand.id, vertical, phase: 1 }),
       });
-      const p1 = await p1Res.json();
+      const p1 = await safeJson(p1Res, 'Klaviyo connect');
       if (p1.error) throw new Error(p1.error);
 
       // ── Step 2/3: Heavy report calls + scoring (~20-30s) ──
@@ -167,7 +177,7 @@ export default function AccountAuditPage() {
           segmentsRes: p1.segmentsRes,
         }),
       });
-      const p2 = await p2Res.json();
+      const p2 = await safeJson(p2Res, 'Performance reports');
       if (p2.error) throw new Error(p2.error);
 
       // ── Step 3/3: AI analysis — SSE streaming (~30-45s) ──
