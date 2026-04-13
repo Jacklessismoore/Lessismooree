@@ -644,18 +644,40 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Plain JSON response — no SSE, maximum speed. This step ONLY
-  // fetches Klaviyo data and computes dimension scores. The AI
-  // analysis happens in a separate /api/account-audit/analyze call.
+  // TWO-PHASE data fetch to stay under Vercel 60s limit.
+  // Phase is determined by the `phase` param: 1 = lightweight calls,
+  // 2 = heavy report calls (needs placedOrderId from phase 1).
+  const phase = (await request.clone().json()).phase || 1;
   try {
     const apiKey = brand.klaviyo_api_key;
     const timeframe = { key: 'last_90_days' };
 
-    const metricsRes = await safe(getMetrics(apiKey), 'metrics');
-    const metrics = extractList<KlaviyoMetric>((metricsRes as unknown) as { data?: KlaviyoMetric[] });
-    const placedOrderId = findMetricId(metrics, 'Placed Order');
+    if (phase === 1) {
+      // Phase 1: metrics + flows + lists + segments (~10-20s)
+      const [metricsRes, flowsRes, listsRes, segmentsRes] = await Promise.all([
+        safe(getMetrics(apiKey), 'metrics'),
+        safe(getFlows(apiKey), 'flows'),
+        safe(getLists(apiKey), 'lists'),
+        safe(getSegments(apiKey), 'segments'),
+      ]);
+      const metrics = extractList<KlaviyoMetric>((metricsRes as unknown) as { data?: KlaviyoMetric[] });
+      const placedOrderId = findMetricId(metrics, 'Placed Order');
+      if (!placedOrderId) {
+        return NextResponse.json({ error: 'Placed Order metric not found.' }, { status: 500 });
+      }
+      return NextResponse.json({
+        phase: 1,
+        placedOrderId,
+        flowsRes,
+        listsRes,
+        segmentsRes,
+      });
+    }
+
+    // Phase 2: heavy report calls (~20-30s)
+    const { placedOrderId } = (await request.clone().json()) as { placedOrderId: string; phase: number };
     if (!placedOrderId) {
-      return NextResponse.json({ error: 'Placed Order metric not found.' }, { status: 500 });
+      return NextResponse.json({ error: 'placedOrderId required for phase 2' }, { status: 400 });
     }
 
     // Pull everything in parallel
@@ -673,16 +695,14 @@ export async function POST(request: NextRequest) {
       'spam_complaint_rate',
     ];
 
-    // Reduced to 5 parallel calls (from 8) to fit within Vercel 60s limit.
-    // Removed: variation reports (A/B detection) + campaigns list (redundant with campaign report).
+    // Phase 2: just the two heavy report calls
+    const body = await request.clone().json();
+    const { flowsRes, listsRes, segmentsRes } = body;
+
     const [
-      flowsRes,
       flowReportRes,
       campaignReportRes,
-      listsRes,
-      segmentsRes,
     ] = await Promise.all([
-      safe(getFlows(apiKey), 'flows'),
       safe(
         getFlowReport(apiKey, {
           conversionMetricId: placedOrderId,
@@ -702,8 +722,6 @@ export async function POST(request: NextRequest) {
         }),
         'campaign_report'
       ),
-      safe(getLists(apiKey), 'lists'),
-      safe(getSegments(apiKey), 'segments'),
     ]);
 
     // If the main reports errored, surface the errors so we can actually debug

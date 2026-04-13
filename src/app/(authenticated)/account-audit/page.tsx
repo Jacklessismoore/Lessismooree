@@ -142,17 +142,35 @@ export default function AccountAuditPage() {
     setRunning(true);
     setResult(null);
     try {
-      // ── Step 1: Fetch Klaviyo data — plain JSON, no streaming (~20-40s) ──
-      toast('Pulling Klaviyo data...', { icon: '⏳', id: 'audit-status' });
-      const fetchRes = await fetch('/api/account-audit/run', {
+      // ── Step 1/3: Light Klaviyo calls (~10-20s) ──
+      toast('Connecting to Klaviyo...', { icon: '⏳', id: 'audit-status' });
+      const p1Res = await fetch('/api/account-audit/run', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ brandId: selectedBrand.id, vertical }),
+        body: JSON.stringify({ brandId: selectedBrand.id, vertical, phase: 1 }),
       });
-      const fetchData = await fetchRes.json();
-      if (fetchData.error) throw new Error(fetchData.error);
+      const p1 = await p1Res.json();
+      if (p1.error) throw new Error(p1.error);
 
-      // ── Step 2: AI analysis — SSE streaming (~30-45s) ──
+      // ── Step 2/3: Heavy report calls + scoring (~20-30s) ──
+      toast('Pulling performance reports...', { icon: '📊', id: 'audit-status' });
+      const p2Res = await fetch('/api/account-audit/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          brandId: selectedBrand.id,
+          vertical,
+          phase: 2,
+          placedOrderId: p1.placedOrderId,
+          flowsRes: p1.flowsRes,
+          listsRes: p1.listsRes,
+          segmentsRes: p1.segmentsRes,
+        }),
+      });
+      const p2 = await p2Res.json();
+      if (p2.error) throw new Error(p2.error);
+
+      // ── Step 3/3: AI analysis — SSE streaming (~30-45s) ──
       toast('Analysing with AI...', { icon: '🧠', id: 'audit-status' });
       const analyzeRes = await fetch('/api/account-audit/analyze', {
         method: 'POST',
@@ -160,15 +178,15 @@ export default function AccountAuditPage() {
         body: JSON.stringify({
           brandName: selectedBrand.name,
           vertical,
-          computed: fetchData.computed,
+          computed: p2.computed,
         }),
       });
       const sseResult = await readSSE(analyzeRes);
       const audit = (sseResult.audit as Record<string, unknown>) || {};
 
-      // Combine fetch data + AI audit
+      // Combine
       setResult({
-        ...fetchData,
+        ...p2,
         audit,
       } as typeof result);
       toast.dismiss('audit-status');
