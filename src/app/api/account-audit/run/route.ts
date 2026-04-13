@@ -900,22 +900,18 @@ ${payloadJson}
     });
 
     {
-      // AI streaming phase
+      // AI streaming phase — use .on('text') for keepalive chunks
+      // then .finalMessage() for the complete response.
       try {
-          let fullText = '';
-          for await (const event of aiStream) {
-            if (
-              event.type === 'content_block_delta' &&
-              'delta' in event &&
-              (event.delta as { type: string; text?: string }).type === 'text_delta'
-            ) {
-              const chunk = (event.delta as { text: string }).text;
-              fullText += chunk;
-              send({ chunk });
-            }
-          }
+          aiStream.on('text', (text) => {
+            send({ chunk: text });
+          });
 
           const finalMsg = await aiStream.finalMessage();
+          const fullText = finalMsg.content
+            .filter((b) => b.type === 'text')
+            .map((b) => ('text' in b ? b.text : ''))
+            .join('');
           const stopReason = finalMsg.stop_reason;
 
     // Extract JSON. Robust to:
